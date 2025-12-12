@@ -7,7 +7,7 @@
 | ID | Scenario | Input | Expected Output |
 |----|----------|-------|-----------------|
 | T1.1 | Create new tracker | (none) | Non-nil tracker with Resolver set to self |
-| T1.2 | Initial state | NewTracker() | Empty variables, empty changed set, nextID=1 |
+| T1.2 | Initial state | NewTracker() | Empty variables, empty changed set, empty rootIDs, nextID=1 |
 
 ### CreateVariable
 | ID | Scenario | Input | Expected Output |
@@ -27,6 +27,10 @@
 | T2.13 | Query props override map | (nil, parentID, "a?x=1", {"x": "2"}) | props["x"]="1" (query wins) |
 | T2.14 | Path with priority prop | (nil, parentID, "a?priority=high", nil) | ValuePriority = PriorityHigh |
 | T2.15 | Priority from props map | (nil, parentID, "a", {"priority": "low"}) | ValuePriority = PriorityLow |
+| T2.16 | Active defaults to true | CreateVariable | v.Active == true |
+| T2.17 | Root added to rootIDs | (value, 0, "", nil) | rootIDs contains v.ID |
+| T2.18 | Child not in rootIDs | (nil, parentID, "path", nil) | rootIDs does not contain v.ID |
+| T2.19 | Child added to parent ChildIDs | (nil, parentID, "path", nil) | parent.ChildIDs contains v.ID |
 
 ### GetVariable
 | ID | Scenario | Input | Expected Output |
@@ -42,6 +46,8 @@
 | T4.2 | Object unregistered | ID with pointer | Object removed from registry |
 | T4.3 | Removed from changed | ID in changed set | ID removed from changed set |
 | T4.4 | Destroy non-existent | invalid ID | No error (no-op) |
+| T4.5 | Root removed from rootIDs | destroy root | rootIDs no longer contains ID |
+| T4.6 | Child removed from ChildIDs | destroy child | parent.ChildIDs no longer contains ID |
 
 ### DetectChanges
 | ID | Scenario | Input | Expected Output |
@@ -61,6 +67,10 @@
 | T5.13 | Slice reuse | call twice | same backing array capacity |
 | T5.14 | Split by priority | high value, low property same var | 2 Change entries |
 | T5.15 | Group same priority | 2 props same priority | 1 Change with both props |
+| T5.16 | Tree traversal | multi-level tree | detects all changes via DFS |
+| T5.17 | Skip inactive | inactive variable | not detected |
+| T5.18 | Skip descendants | inactive parent | children not detected |
+| T5.19 | Multiple roots | 2 root trees | both traversed |
 
 ### Variables
 | ID | Scenario | Input | Expected Output |

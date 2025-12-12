@@ -31,7 +31,7 @@ The change tracker.
 ```go
 type Tracker struct {
     Resolver Resolver  // defaults to the tracker itself
-    // Internal fields for variable storage, ID generation, changed set, object registry
+    // Internal fields for variable storage, ID generation, changed set, object registry, root variable IDs
 }
 ```
 
@@ -43,6 +43,8 @@ A tracked variable.
 type Variable struct {
     ID                 int64
     ParentID           int64
+    ChildIDs           []int64   // IDs of child variables (maintained automatically)
+    Active             bool      // whether this variable and its children are checked for changes (default: true)
     Properties         map[string]string
     PropertyPriorities map[string]Priority
     Path               []any     // parsed path elements
@@ -53,6 +55,10 @@ type Variable struct {
 ```
 
 The path specifies how to navigate from the parent's value to this variable's value. It is parsed into the `Path` field.
+
+The ChildIDs field is maintained automatically by the tracker: when a variable is created with a parent, its ID is added to the parent's ChildIDs; when destroyed, it is removed.
+
+The Active field controls change detection: when true (the default), the variable and its children are checked for changes. When false, the variable and all its descendants are skipped during `DetectChanges()`.
 
 ### Resolver
 
@@ -133,15 +139,18 @@ func (t *Tracker) CreateVariable(value any, parentID int64, path string, propert
 
 **Behavior:**
 1. Assigns a unique ID to the variable (incrementing from 1)
-2. Merges properties: starts with `properties` map, overlays properties from path query
-3. Parses the path portion into path elements
-4. Sets `ValuePriority` from the `priority` property (if present)
-5. For root variables: caches the provided value
-6. For child variables: calls `Get()` to compute and cache the value from parent
-7. If the cached value is a pointer or map, registers it in the object registry
-8. Converts cached value to Value JSON and stores for change detection
-9. If `properties` is nil, initializes an empty map
-10. Stores the variable in the tracker
+2. Sets `Active` to true (default)
+3. For root variables (parentID == 0): adds the variable ID to the root variable set
+4. For child variables: adds the new variable's ID to the parent's `ChildIDs`
+5. Merges properties: starts with `properties` map, overlays properties from path query
+6. Parses the path portion into path elements
+7. Sets `ValuePriority` from the `priority` property (if present)
+8. For root variables: caches the provided value
+9. For child variables: calls `Get()` to compute and cache the value from parent
+10. If the cached value is a pointer or map, registers it in the object registry
+11. Converts cached value to Value JSON and stores for change detection
+12. If `properties` is nil, initializes an empty map
+13. Stores the variable in the tracker
 
 ### GetVariable
 
@@ -163,13 +172,15 @@ func (t *Tracker) DestroyVariable(id int64)
 
 **Behavior:**
 - Removes the variable from the tracker
+- For root variables: removes the variable ID from the root variable set
+- For child variables: removes the variable ID from the parent's `ChildIDs`
 - Removes the variable from the changed set if present
 - Unregisters the object from the object registry (if it was a pointer)
 - Does not automatically destroy child variables (caller's responsibility)
 
 ### DetectChanges
 
-Compares current Value JSON to stored Value JSON, updates the changed set, and returns sorted changes.
+Compares current Value JSON to stored Value JSON using tree traversal, updates the changed set, and returns sorted changes.
 
 ```go
 func (t *Tracker) DetectChanges() []Change
@@ -178,11 +189,16 @@ func (t *Tracker) DetectChanges() []Change
 **Returns:** A slice of Change objects sorted by priority (high → medium → low).
 
 **Behavior:**
-1. For each variable in the tracker:
-   - Get the current value and convert to Value JSON
-   - Compare to the stored Value JSON
-   - If different, mark the variable's value as changed
-   - Update the stored Value JSON to the current Value JSON
+1. For each root variable ID in the root variable set:
+   - Perform a depth-first traversal starting from the root variable
+   - For each variable visited:
+     - If the variable is inactive (`Active == false`), skip it and do not visit its children
+     - If the variable is active:
+       - Get the current value and convert to Value JSON
+       - Compare to the stored Value JSON
+       - If different, mark the variable's value as changed
+       - Update the stored Value JSON to the current Value JSON
+       - Recursively visit all child variables
 2. Sort all changes (value and property) by priority
 3. Clear the internal change records but preserve the sorted changes slice
 4. Return the sorted changes
@@ -391,6 +407,19 @@ Returns the parent variable, or nil if this is a root variable.
 ```go
 func (v *Variable) Parent() *Variable
 ```
+
+### SetActive
+
+Sets whether the variable and its children should be checked for changes.
+
+```go
+func (v *Variable) SetActive(active bool)
+```
+
+**Parameters:**
+- `active` - When true (default), the variable and its children participate in change detection. When false, the variable and all its descendants are skipped during `DetectChanges()`.
+
+**Note:** This change takes effect on the next `DetectChanges()` call. Setting a variable to inactive effectively "prunes" that entire subtree from change detection.
 
 ### GetProperty
 

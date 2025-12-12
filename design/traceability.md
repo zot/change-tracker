@@ -4,8 +4,8 @@
 
 | Spec          | Design Elements                                                                                                                                                                                                                     |
 |---------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| main.md       | crc-Tracker.md, crc-Variable.md, crc-Priority.md, crc-Change.md, crc-ObjectRegistry.md, seq-create-variable.md, seq-detect-changes.md                                                                                               |
-| api.md        | crc-Tracker.md, crc-Variable.md, crc-Priority.md, crc-Change.md, crc-Resolver.md, crc-ObjectRef.md, seq-create-variable.md, seq-detect-changes.md, seq-get-value.md, seq-set-value.md, seq-set-property.md, seq-to-value-json.md   |
+| main.md       | crc-Tracker.md, crc-Variable.md, crc-Priority.md, crc-Change.md, crc-ObjectRegistry.md, seq-create-variable.md, seq-destroy-variable.md, seq-detect-changes.md                                                                         |
+| api.md        | crc-Tracker.md, crc-Variable.md, crc-Priority.md, crc-Change.md, crc-Resolver.md, crc-ObjectRef.md, seq-create-variable.md, seq-destroy-variable.md, seq-detect-changes.md, seq-get-value.md, seq-set-value.md, seq-set-property.md, seq-to-value-json.md   |
 | resolver.md   | crc-Resolver.md, seq-get-value.md, seq-set-value.md                                                                                                                                                                                                   |
 | value-json.md | crc-ObjectRef.md, crc-ObjectRegistry.md, seq-to-value-json.md                                                                                                                                                                                         |
 
@@ -36,7 +36,8 @@ Note: All design elements are implemented in a single file (`tracker.go`) for si
 
 ### Sequences
 - [x] seq-create-variable.md -> tracker.go:CreateVariable, RegisterObject
-- [x] seq-detect-changes.md -> tracker.go:DetectChanges (includes internal sortChanges)
+- [x] seq-destroy-variable.md -> tracker.go:DestroyVariable
+- [x] seq-detect-changes.md -> tracker.go:DetectChanges (includes internal sortChanges, checkVariable)
 - [x] seq-get-value.md -> tracker.go:Variable.Get, Tracker.Get
 - [x] seq-set-value.md -> tracker.go:Variable.Set, Tracker.Set
 - [x] seq-set-property.md -> tracker.go:Variable.SetProperty, Tracker.recordPropertyChange
@@ -96,3 +97,4 @@ All public functions and methods in tracker.go have traceability comments:
 | Variable.GetProperty         | crc-Variable.md                                                                                                           | -                      |
 | Variable.GetPropertyPriority | crc-Variable.md                                                                                                           | -                      |
 | Variable.SetProperty         | -                                                                                                                         | seq-set-property.md    |
+| Variable.SetActive           | crc-Variable.md                                                                                                           | -                      |

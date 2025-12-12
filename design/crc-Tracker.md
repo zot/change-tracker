@@ -6,6 +6,7 @@
 ### Knows
 - variables: map[int64]*Variable - all tracked variables indexed by ID
 - nextID: int64 - next variable ID to assign (starts at 1)
+- rootIDs: map[int64]bool - set of root variable IDs (variables with ParentID == 0) for efficient tree traversal
 - valueChanges: map[int64]bool - set of variable IDs with value changes
 - propertyChanges: map[int64][]string - map of variable IDs to changed property names
 - sortedChanges: []Change - reusable slice for sortChanges output (flat array, not pointers)
@@ -14,15 +15,15 @@
 
 ### Does
 - NewTracker(): creates new tracker instance with self as resolver
-- CreateVariable(value, parentID, path, props): creates variable with path+query parsing, assigns ID, registers objects, caches value
+- CreateVariable(value, parentID, path, props): creates variable with path+query parsing, assigns ID, registers objects, caches value, adds to rootIDs if root, adds ID to parent's ChildIDs if child
 - GetVariable(id): retrieves variable by ID
-- DestroyVariable(id): removes variable, unregisters object, removes from change tracking
-- DetectChanges(): compares current values to cached ValueJSON, marks value as changed, calls sortChanges, clears internal change records, returns []Change sorted by priority
+- DestroyVariable(id): removes variable, unregisters object, removes from change tracking, removes from rootIDs if root, removes ID from parent's ChildIDs if child
+- DetectChanges(): performs depth-first tree traversal from root variables, skips inactive variables and their descendants, compares current values to cached ValueJSON, marks value as changed, calls sortChanges, clears internal change records, returns []Change sorted by priority
 - sortChanges() (internal): returns []Change sorted by priority (high -> medium -> low), reuses sortedChanges slice
 - recordPropertyChange(varID, propName): records a property change (called by Variable.SetProperty)
 - Variables(): returns all variables
-- RootVariables(): returns variables with no parent
-- Children(parentID): returns child variables of a parent
+- RootVariables(): returns variables with no parent (uses rootIDs set)
+- Children(parentID): returns child variables of a parent (uses parent's ChildIDs)
 - RegisterObject(obj, varID): manually registers pointer/map in object registry
 - UnregisterObject(obj): removes object from registry
 - LookupObject(obj): finds variable ID for registered object
@@ -40,8 +41,9 @@
 - Priority: uses Priority for sorting changes
 
 ## Sequences
-- seq-create-variable.md: variable creation and registration
-- seq-detect-changes.md: change detection workflow (includes sorting and clearing)
+- seq-create-variable.md: variable creation, registration, parent ChildIDs update, rootIDs update
+- seq-destroy-variable.md: variable destruction, unregistration, parent ChildIDs update, rootIDs update
+- seq-detect-changes.md: change detection workflow with tree traversal (includes sorting and clearing)
 - seq-get-value.md: getting values via path resolution
 - seq-set-value.md: setting values via path resolution
 - seq-to-value-json.md: value serialization

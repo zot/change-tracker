@@ -3,7 +3,7 @@
 
 ## Participants
 - Client: caller triggering change detection
-- Tracker: orchestrates change detection
+- Tracker: orchestrates change detection via tree traversal
 - Variable: each tracked variable
 - Resolver: navigates to current values
 - Change: change record data structure
@@ -16,51 +16,70 @@ Client              Tracker             Variable            Resolver        Chan
   |  DetectChanges()   |                    |                   |              |
   |------------------->|                    |                   |              |
   |                    |                    |                   |              |
-  |                    |  [for each variable in tracker]        |              |
+  |                    |  [for each rootID in rootIDs]          |              |
   |                    |                    |                   |              |
-  |                    | Get()              |                   |              |
-  |                    |------------------->|                   |              |
-  |                    |                    |                   |              |
-  |                    |                    |    [if child var] |              |
-  |                    |                    | parent.Value      |              |
-  |                    |                    |-------.           |              |
-  |                    |                    |<------'           |              |
-  |                    |                    |                   |              |
-  |                    |                    |  [for each path element]         |
-  |                    |                    | Get(val, elem)    |              |
-  |                    |                    |------------------>|              |
-  |                    |                    |      value        |              |
-  |                    |                    |<------------------|              |
-  |                    |                    |                   |              |
-  |                    |      currentValue  |                   |              |
-  |                    |<-------------------|                   |              |
-  |                    |                    |                   |              |
-  |                    | ToValueJSON        |                   |              |
-  |                    | (currentValue)     |                   |              |
+  |                    | checkVariable(id)  |                   |              |
+  |                    | (recursive DFS)    |                   |              |
   |                    |--------.           |                   |              |
-  |                    |<-------' currentJSON                   |              |
-  |                    |                    |                   |              |
-  |                    | compare            |                   |              |
-  |                    | currentJSON vs     |                   |              |
-  |                    | Variable.ValueJSON |                   |              |
-  |                    |--------.           |                   |              |
+  |                    |        |           |                   |              |
+  |                    |        |    [if v.Active == false]     |              |
+  |                    |        |    skip variable and children |              |
+  |                    |        |    return                     |              |
+  |                    |        |           |                   |              |
+  |                    |        |    [if v.Active == true]      |              |
+  |                    |        |           |                   |              |
+  |                    |        | Get()     |                   |              |
+  |                    |        |---------->|                   |              |
+  |                    |        |           |                   |              |
+  |                    |        |           |    [if child var] |              |
+  |                    |        |           | parent.Value      |              |
+  |                    |        |           |-------.           |              |
+  |                    |        |           |<------'           |              |
+  |                    |        |           |                   |              |
+  |                    |        |           |  [for each path element]         |
+  |                    |        |           | Get(val, elem)    |              |
+  |                    |        |           |------------------>|              |
+  |                    |        |           |      value        |              |
+  |                    |        |           |<------------------|              |
+  |                    |        |           |                   |              |
+  |                    |        | currentValue                  |              |
+  |                    |        |<----------|                   |              |
+  |                    |        |           |                   |              |
+  |                    |        | ToValueJSON                   |              |
+  |                    |        | (currentValue)                |              |
+  |                    |        |--------.  |                   |              |
+  |                    |        |<------'   |                   |              |
+  |                    |        | currentJSON                   |              |
+  |                    |        |           |                   |              |
+  |                    |        | compare   |                   |              |
+  |                    |        | currentJSON vs                |              |
+  |                    |        | v.ValueJSON                   |              |
+  |                    |        |--------.  |                   |              |
+  |                    |        |<-------'  |                   |              |
+  |                    |        |           |                   |              |
+  |                    |        |    [if different]             |              |
+  |                    |        | valueChanges[ID]              |              |
+  |                    |        | = true    |                   |              |
+  |                    |        |--------.  |                   |              |
+  |                    |        |<-------'  |                   |              |
+  |                    |        |           |                   |              |
+  |                    |        |           | ValueJSON =       |              |
+  |                    |        |           | currentJSON       |              |
+  |                    |        |---------->|                   |              |
+  |                    |        |           |                   |              |
+  |                    |        |           | Value =           |              |
+  |                    |        |           | currentValue      |              |
+  |                    |        |---------->|                   |              |
+  |                    |        |           |                   |              |
+  |                    |        |  [for each childID in v.ChildIDs]            |
+  |                    |        | checkVariable(childID)        |              |
+  |                    |        | (recursive)                   |              |
+  |                    |        |--------.  |                   |              |
+  |                    |        |<-------'  |                   |              |
+  |                    |        |           |                   |              |
   |                    |<-------'           |                   |              |
   |                    |                    |                   |              |
-  |                    |    [if different]  |                   |              |
-  |                    | valueChanges[ID]   |                   |              |
-  |                    | = true             |                   |              |
-  |                    |--------.           |                   |              |
-  |                    |<-------'           |                   |              |
-  |                    |                    |                   |              |
-  |                    |                    | ValueJSON =       |              |
-  |                    |                    | currentJSON       |              |
-  |                    |------------------->|                   |              |
-  |                    |                    |                   |              |
-  |                    |                    | Value =           |              |
-  |                    |                    | currentValue      |              |
-  |                    |------------------->|                   |              |
-  |                    |                    |                   |              |
-  |                    |  [end for each]    |                   |              |
+  |                    |  [end for each root]                   |              |
   |                    |                    |                   |              |
   |                    | sortChanges()      |                   |              |
   |                    | (internal)         |                   |              |
@@ -81,7 +100,10 @@ Client              Tracker             Variable            Resolver        Chan
 ```
 
 ## Notes
-- All variables are checked, not just root variables
+- Tree traversal: DetectChanges iterates over root variables and performs depth-first traversal
+- Active check: If a variable's Active field is false, it and all its descendants are skipped
+- Root variables are tracked in rootIDs set for efficient iteration
+- Child variables are found via parent's ChildIDs slice
 - Comparison uses Value JSON representation (deep equality)
 - Both Value and ValueJSON are updated after comparison
 - Root variables use their cached Value directly (no path navigation)

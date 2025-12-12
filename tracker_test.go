@@ -1747,3 +1747,308 @@ func TestIntegration_ObjectIdentity(t *testing.T) {
 		t.Error("same object should produce same ObjectRef")
 	}
 }
+
+// ============================================================================
+// ChildIDs Tests (new feature)
+// ============================================================================
+
+// Test ChildIDs maintained on create
+func TestChildIDs_CreateVariable(t *testing.T) {
+	tr := NewTracker()
+	person := &Person{Name: "Alice", Age: 30}
+	parent := tr.CreateVariable(person, 0, "", nil)
+
+	// Root has no children initially
+	if len(parent.ChildIDs) != 0 {
+		t.Errorf("expected no children, got %d", len(parent.ChildIDs))
+	}
+
+	// Create children
+	child1 := tr.CreateVariable(nil, parent.ID, "Name", nil)
+	child2 := tr.CreateVariable(nil, parent.ID, "Age", nil)
+
+	// Parent should have both children
+	if len(parent.ChildIDs) != 2 {
+		t.Errorf("expected 2 children, got %d", len(parent.ChildIDs))
+	}
+	if parent.ChildIDs[0] != child1.ID || parent.ChildIDs[1] != child2.ID {
+		t.Errorf("expected ChildIDs [%d, %d], got %v", child1.ID, child2.ID, parent.ChildIDs)
+	}
+}
+
+// Test ChildIDs maintained on destroy
+func TestChildIDs_DestroyVariable(t *testing.T) {
+	tr := NewTracker()
+	person := &Person{Name: "Alice", Age: 30}
+	parent := tr.CreateVariable(person, 0, "", nil)
+	child1 := tr.CreateVariable(nil, parent.ID, "Name", nil)
+	child2 := tr.CreateVariable(nil, parent.ID, "Age", nil)
+
+	// Destroy first child
+	tr.DestroyVariable(child1.ID)
+
+	// Parent should only have second child
+	if len(parent.ChildIDs) != 1 {
+		t.Errorf("expected 1 child after destroy, got %d", len(parent.ChildIDs))
+	}
+	if parent.ChildIDs[0] != child2.ID {
+		t.Errorf("expected ChildIDs [%d], got %v", child2.ID, parent.ChildIDs)
+	}
+}
+
+// Test rootIDs maintained on create
+func TestRootIDs_CreateVariable(t *testing.T) {
+	tr := NewTracker()
+
+	// Create root variables
+	root1 := tr.CreateVariable(1, 0, "", nil)
+	root2 := tr.CreateVariable(2, 0, "", nil)
+
+	// Both should be in rootIDs
+	if !tr.rootIDs[root1.ID] {
+		t.Error("root1 should be in rootIDs")
+	}
+	if !tr.rootIDs[root2.ID] {
+		t.Error("root2 should be in rootIDs")
+	}
+
+	// Child should not be in rootIDs
+	child := tr.CreateVariable(nil, root1.ID, "", nil)
+	if tr.rootIDs[child.ID] {
+		t.Error("child should not be in rootIDs")
+	}
+}
+
+// Test rootIDs maintained on destroy
+func TestRootIDs_DestroyVariable(t *testing.T) {
+	tr := NewTracker()
+	root := tr.CreateVariable(1, 0, "", nil)
+
+	// Destroy root
+	tr.DestroyVariable(root.ID)
+
+	// Should be removed from rootIDs
+	if tr.rootIDs[root.ID] {
+		t.Error("root should be removed from rootIDs after destroy")
+	}
+}
+
+// ============================================================================
+// Active Field Tests (new feature)
+// ============================================================================
+
+// Test Active defaults to true
+func TestActive_DefaultTrue(t *testing.T) {
+	tr := NewTracker()
+	v := tr.CreateVariable(42, 0, "", nil)
+
+	if !v.Active {
+		t.Error("Active should default to true")
+	}
+}
+
+// Test SetActive method
+func TestSetActive(t *testing.T) {
+	tr := NewTracker()
+	v := tr.CreateVariable(42, 0, "", nil)
+
+	// Set to inactive
+	v.SetActive(false)
+	if v.Active {
+		t.Error("Active should be false after SetActive(false)")
+	}
+
+	// Set back to active
+	v.SetActive(true)
+	if !v.Active {
+		t.Error("Active should be true after SetActive(true)")
+	}
+}
+
+// Test inactive variable is skipped in DetectChanges
+func TestActive_SkipInactive(t *testing.T) {
+	tr := NewTracker()
+	person := &Person{Name: "Alice", Age: 30}
+	parent := tr.CreateVariable(person, 0, "", nil)
+	child := tr.CreateVariable(nil, parent.ID, "Age", nil)
+
+	// Clear initial state
+	tr.DetectChanges()
+
+	// Set child to inactive
+	child.SetActive(false)
+
+	// Modify value
+	person.Age = 31
+
+	// DetectChanges should not detect the change
+	changes := tr.DetectChanges()
+	for _, c := range changes {
+		if c.VariableID == child.ID {
+			t.Error("inactive child should not be in changes")
+		}
+	}
+}
+
+// Test inactive parent skips all descendants
+func TestActive_SkipDescendants(t *testing.T) {
+	tr := NewTracker()
+	person := &Person{Name: "Alice", Age: 30, Address: &Address{City: "NYC"}}
+	root := tr.CreateVariable(person, 0, "", nil)
+	addressVar := tr.CreateVariable(nil, root.ID, "Address", nil)
+	cityVar := tr.CreateVariable(nil, addressVar.ID, "City", nil)
+
+	// Clear initial state
+	tr.DetectChanges()
+
+	// Set address (middle) to inactive - should skip city too
+	addressVar.SetActive(false)
+
+	// Modify both address and city
+	person.Address.City = "LA"
+
+	// DetectChanges should not detect city change
+	changes := tr.DetectChanges()
+	for _, c := range changes {
+		if c.VariableID == addressVar.ID || c.VariableID == cityVar.ID {
+			t.Errorf("inactive subtree should not be in changes, got variable %d", c.VariableID)
+		}
+	}
+}
+
+// Test re-activating variable
+func TestActive_Reactivate(t *testing.T) {
+	tr := NewTracker()
+	person := &Person{Name: "Alice", Age: 30}
+	parent := tr.CreateVariable(person, 0, "", nil)
+	child := tr.CreateVariable(nil, parent.ID, "Age", nil)
+
+	// Clear initial state
+	tr.DetectChanges()
+
+	// Set to inactive
+	child.SetActive(false)
+	person.Age = 31
+	tr.DetectChanges() // Should not detect
+
+	// Re-activate
+	child.SetActive(true)
+	person.Age = 32 // Change again
+
+	// Now should detect
+	changes := tr.DetectChanges()
+	found := false
+	for _, c := range changes {
+		if c.VariableID == child.ID && c.ValueChanged {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("re-activated child should detect changes")
+	}
+}
+
+// ============================================================================
+// Tree Traversal Tests (new behavior)
+// ============================================================================
+
+// Test DetectChanges uses tree traversal
+func TestDetectChanges_TreeTraversal(t *testing.T) {
+	tr := NewTracker()
+	person := &Person{Name: "Alice", Age: 30}
+	root := tr.CreateVariable(person, 0, "", nil)
+	nameVar := tr.CreateVariable(nil, root.ID, "Name", nil)
+	ageVar := tr.CreateVariable(nil, root.ID, "Age", nil)
+
+	// Clear initial state
+	tr.DetectChanges()
+
+	// Modify both fields
+	person.Name = "Bob"
+	person.Age = 31
+
+	// DetectChanges should find both changes via tree traversal
+	changes := tr.DetectChanges()
+	foundName := false
+	foundAge := false
+	for _, c := range changes {
+		if c.VariableID == nameVar.ID && c.ValueChanged {
+			foundName = true
+		}
+		if c.VariableID == ageVar.ID && c.ValueChanged {
+			foundAge = true
+		}
+	}
+	if !foundName {
+		t.Error("should detect name change via tree traversal")
+	}
+	if !foundAge {
+		t.Error("should detect age change via tree traversal")
+	}
+}
+
+// Test multi-level tree traversal
+func TestDetectChanges_MultiLevelTree(t *testing.T) {
+	tr := NewTracker()
+	person := &Person{Name: "Alice", Address: &Address{City: "NYC", Country: "USA"}}
+	root := tr.CreateVariable(person, 0, "", nil)
+	addrVar := tr.CreateVariable(nil, root.ID, "Address", nil)
+	cityVar := tr.CreateVariable(nil, addrVar.ID, "City", nil)
+
+	// Clear initial state
+	tr.DetectChanges()
+
+	// Modify city (2 levels deep)
+	person.Address.City = "LA"
+
+	// DetectChanges should find city change via tree traversal
+	changes := tr.DetectChanges()
+	found := false
+	for _, c := range changes {
+		if c.VariableID == cityVar.ID && c.ValueChanged {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("should detect city change via multi-level tree traversal")
+	}
+}
+
+// Test multiple root trees
+func TestDetectChanges_MultipleRoots(t *testing.T) {
+	tr := NewTracker()
+	person1 := &Person{Name: "Alice"}
+	person2 := &Person{Name: "Bob"}
+	root1 := tr.CreateVariable(person1, 0, "", nil)
+	root2 := tr.CreateVariable(person2, 0, "", nil)
+	name1 := tr.CreateVariable(nil, root1.ID, "Name", nil)
+	name2 := tr.CreateVariable(nil, root2.ID, "Name", nil)
+
+	// Clear initial state
+	tr.DetectChanges()
+
+	// Modify both
+	person1.Name = "Alice2"
+	person2.Name = "Bob2"
+
+	// Should detect both changes from different root trees
+	changes := tr.DetectChanges()
+	found1 := false
+	found2 := false
+	for _, c := range changes {
+		if c.VariableID == name1.ID && c.ValueChanged {
+			found1 = true
+		}
+		if c.VariableID == name2.ID && c.ValueChanged {
+			found2 = true
+		}
+	}
+	if !found1 {
+		t.Error("should detect change in first root tree")
+	}
+	if !found2 {
+		t.Error("should detect change in second root tree")
+	}
+}

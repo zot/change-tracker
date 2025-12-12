@@ -4,7 +4,7 @@
 
 ### Core Tracking System
 **Purpose**: Variable management and change detection
-**Design Elements**: crc-Tracker.md, crc-Variable.md, crc-Priority.md, crc-Change.md, seq-create-variable.md, seq-detect-changes.md, seq-set-property.md, test-Tracker.md, test-Variable.md, test-Priority.md, test-Change.md
+**Design Elements**: crc-Tracker.md, crc-Variable.md, crc-Priority.md, crc-Change.md, seq-create-variable.md, seq-destroy-variable.md, seq-detect-changes.md, seq-set-property.md, test-Tracker.md, test-Variable.md, test-Priority.md, test-Change.md
 
 ### Value Resolution System
 **Purpose**: Navigate and modify values via paths

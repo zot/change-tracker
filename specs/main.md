@@ -29,6 +29,7 @@ The package provides:
 
 The tracker is the central object that:
 - Creates and manages variables
+- Maintains a set of root variable IDs for efficient tree traversal
 - Maintains an object registry (weak map from objects to variable IDs)
 - Tracks which variables have changed
 - Has a `Resolver` field (defaults to itself, using Go reflection)
@@ -39,6 +40,8 @@ The tracker is the central object that:
 Each variable has:
 - **ID** - Unique integer identifier (assigned by the tracker)
 - **ParentID** - ID of parent variable (0 = no parent, making it a "root" variable)
+- **ChildIDs** - Slice of child variable IDs (maintained automatically by the tracker)
+- **Active** - Whether this variable and its children should be checked for changes (default: true)
 - **Properties** - Map of string key-value metadata
 - **PropertyPriorities** - Map of property names to their priorities
 - **Path** - Parsed path elements (e.g., `"Address.City"` becomes `["Address", "City"]`)
@@ -51,6 +54,15 @@ A variable's value is computed by:
 2. Applying each path element using the tracker's resolver
 
 Variables form a tree structure via parent-child relationships.
+
+### Active Variables
+
+The **Active** field controls whether a variable participates in change detection:
+
+- When `Active` is true (default), the variable and its children are checked for changes
+- When `Active` is false, the variable and all its descendants are skipped during change detection
+- Setting a variable to inactive effectively "prunes" that entire subtree from change detection
+- The Active field can be toggled at any time; changes take effect on the next `DetectChanges()` call
 
 ### Priorities
 
@@ -102,12 +114,17 @@ The tracker itself implements the resolver interface using Go reflection, suppor
 
 ### Change Detection
 
-Change detection compares Value JSON representations:
-1. On variable creation, the initial value is converted to Value JSON and stored
-2. `DetectChanges()` converts current values to Value JSON and compares to stored Value JSON
-3. After comparison, current Value JSON becomes the new stored Value JSON
-4. Changes are sorted by priority and returned
-5. Internal change records are cleared (but the returned slice remains valid)
+Change detection uses tree traversal starting from root variables:
+
+1. The tracker maintains a set of root variable IDs (variables with ParentID == 0)
+2. `DetectChanges()` performs a depth-first traversal for each root variable:
+   - For each active variable, convert current value to Value JSON and compare to stored Value JSON
+   - If the variable is inactive, skip it and all its descendants
+   - If active, recursively check all children
+3. On variable creation, the initial value is converted to Value JSON and stored
+4. After comparison, current Value JSON becomes the new stored Value JSON
+5. Changes are sorted by priority and returned
+6. Internal change records are cleared (but the returned slice remains valid)
 
 Each variable stores its last known Value JSON for comparison purposes.
 

@@ -55,6 +55,23 @@
 | V5.2 | Get default priority | After SetProperty("x","v") | GetPropertyPriority("x") = Medium |
 | V5.3 | Get non-existent | GetPropertyPriority("missing") | returns PriorityMedium |
 
+### Active/SetActive
+| ID | Scenario | Input | Expected Output |
+|----|----------|-------|-----------------|
+| V6.1 | Active defaults to true | CreateVariable | v.Active == true |
+| V6.2 | SetActive false | v.SetActive(false) | v.Active == false |
+| V6.3 | SetActive true | v.SetActive(true) | v.Active == true |
+| V6.4 | Inactive skipped | SetActive(false), DetectChanges | variable not in changes |
+| V6.5 | Inactive skips descendants | parent SetActive(false) | children not in changes |
+| V6.6 | Re-activate | SetActive(false) then true | variable in changes again |
+
+### ChildIDs
+| ID | Scenario | Input | Expected Output |
+|----|----------|-------|-----------------|
+| V7.1 | Empty on creation | CreateVariable (no children) | ChildIDs is nil or empty |
+| V7.2 | Populated on child creation | CreateVariable with parent | parent.ChildIDs contains child ID |
+| V7.3 | Removed on destroy | DestroyVariable(child) | parent.ChildIDs no longer contains ID |
+
 ## Error Scenarios
 
 | ID | Scenario | Input | Expected Error |

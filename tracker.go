@@ -101,6 +101,7 @@ type Tracker struct {
 
 	variables map[int64]*Variable
 	nextID    int64
+	rootIDs   map[int64]bool // set of root variable IDs for efficient tree traversal
 
 	// Change tracking
 	valueChanges    map[int64]bool            // variables with value changes
@@ -121,6 +122,7 @@ func NewTracker() *Tracker {
 	t := &Tracker{
 		variables:       make(map[int64]*Variable),
 		nextID:          1,
+		rootIDs:         make(map[int64]bool),
 		valueChanges:    make(map[int64]bool),
 		propertyChanges: make(map[int64]*propertyChange),
 		sortedChanges:   make([]Change, 0, 16),
@@ -137,6 +139,8 @@ func NewTracker() *Tracker {
 type Variable struct {
 	ID                 int64
 	ParentID           int64
+	ChildIDs           []int64  // IDs of child variables (maintained automatically)
+	Active             bool     // whether this variable and its children are checked for changes
 	Properties         map[string]string
 	PropertyPriorities map[string]Priority
 	Path               []any    // parsed path elements
@@ -157,6 +161,8 @@ func (t *Tracker) CreateVariable(value any, parentID int64, path string, propert
 	v := &Variable{
 		ID:                 t.nextID,
 		ParentID:           parentID,
+		ChildIDs:           nil, // initialized as nil, will be allocated on first child
+		Active:             true,
 		Properties:         make(map[string]string),
 		PropertyPriorities: make(map[string]Priority),
 		ValuePriority:      PriorityMedium,
@@ -193,13 +199,17 @@ func (t *Tracker) CreateVariable(value any, parentID int64, path string, propert
 		v.ValuePriority = ParsePriority(priorityStr)
 	}
 
-	// Cache value
+	// Cache value and manage tree structure
 	if parentID == 0 {
-		// Root variable: use provided value
+		// Root variable: use provided value and add to rootIDs
 		v.Value = value
+		t.rootIDs[v.ID] = true
 	} else {
-		// Child variable: compute value from parent
+		// Child variable: compute value from parent and add to parent's ChildIDs
 		v.Value, _ = v.Get()
+		if parent := t.variables[parentID]; parent != nil {
+			parent.ChildIDs = append(parent.ChildIDs, v.ID)
+		}
 	}
 
 	// Register object if pointer or map
@@ -306,10 +316,26 @@ func (t *Tracker) GetVariable(id int64) *Variable {
 
 // DestroyVariable removes a variable from the tracker.
 // CRC: crc-Tracker.md
+// Sequence: seq-destroy-variable.md
 func (t *Tracker) DestroyVariable(id int64) {
 	v, ok := t.variables[id]
 	if !ok {
 		return
+	}
+
+	// Remove from rootIDs if root variable
+	if v.ParentID == 0 {
+		delete(t.rootIDs, id)
+	} else {
+		// Remove from parent's ChildIDs if child variable
+		if parent := t.variables[v.ParentID]; parent != nil {
+			for i, childID := range parent.ChildIDs {
+				if childID == id {
+					parent.ChildIDs = append(parent.ChildIDs[:i], parent.ChildIDs[i+1:]...)
+					break
+				}
+			}
+		}
 	}
 
 	// Unregister object if it was registered
@@ -325,18 +351,42 @@ func (t *Tracker) DestroyVariable(id int64) {
 	delete(t.variables, id)
 }
 
-// DetectChanges compares current values to cached ValueJSON, sorts changes by priority,
-// clears internal change records, and returns the sorted changes.
+// DetectChanges compares current values to cached ValueJSON using tree traversal,
+// sorts changes by priority, clears internal change records, and returns the sorted changes.
 // CRC: crc-Tracker.md
 // Sequence: seq-detect-changes.md
 func (t *Tracker) DetectChanges() []Change {
-	for _, v := range t.variables {
-		// Get current value
-		currentValue, err := v.Get()
-		if err != nil {
-			continue
-		}
+	// Perform depth-first traversal starting from root variables
+	for rootID := range t.rootIDs {
+		t.checkVariable(rootID)
+	}
 
+	// Sort changes by priority
+	result := t.sortChanges()
+
+	// Clear internal change records (but preserve the sorted changes slice)
+	t.valueChanges = make(map[int64]bool)
+	t.propertyChanges = make(map[int64]*propertyChange)
+
+	return result
+}
+
+// checkVariable recursively checks a variable and its children for changes.
+// If the variable is inactive, it and all its descendants are skipped.
+func (t *Tracker) checkVariable(id int64) {
+	v := t.variables[id]
+	if v == nil {
+		return
+	}
+
+	// If inactive, skip this variable and all its descendants
+	if !v.Active {
+		return
+	}
+
+	// Get current value
+	currentValue, err := v.Get()
+	if err == nil {
 		// Convert to Value JSON
 		currentJSON := t.ToValueJSON(currentValue)
 
@@ -353,14 +403,10 @@ func (t *Tracker) DetectChanges() []Change {
 		t.registerIfNeeded(currentValue, v.ID)
 	}
 
-	// Sort changes by priority
-	result := t.sortChanges()
-
-	// Clear internal change records (but preserve the sorted changes slice)
-	t.valueChanges = make(map[int64]bool)
-	t.propertyChanges = make(map[int64]*propertyChange)
-
-	return result
+	// Recursively check all children
+	for _, childID := range v.ChildIDs {
+		t.checkVariable(childID)
+	}
 }
 
 // jsonEqual compares two Value JSON values for equality.
@@ -537,9 +583,9 @@ func (t *Tracker) Variables() []*Variable {
 // RootVariables returns variables with no parent (parentID == 0).
 // CRC: crc-Tracker.md
 func (t *Tracker) RootVariables() []*Variable {
-	var result []*Variable
-	for _, v := range t.variables {
-		if v.ParentID == 0 {
+	result := make([]*Variable, 0, len(t.rootIDs))
+	for id := range t.rootIDs {
+		if v := t.variables[id]; v != nil {
 			result = append(result, v)
 		}
 	}
@@ -549,9 +595,13 @@ func (t *Tracker) RootVariables() []*Variable {
 // Children returns child variables of a given parent.
 // CRC: crc-Tracker.md
 func (t *Tracker) Children(parentID int64) []*Variable {
-	var result []*Variable
-	for _, v := range t.variables {
-		if v.ParentID == parentID {
+	parent := t.variables[parentID]
+	if parent == nil {
+		return nil
+	}
+	result := make([]*Variable, 0, len(parent.ChildIDs))
+	for _, childID := range parent.ChildIDs {
+		if v := t.variables[childID]; v != nil {
 			result = append(result, v)
 		}
 	}
@@ -942,6 +992,12 @@ func (v *Variable) Parent() *Variable {
 		return nil
 	}
 	return v.tracker.GetVariable(v.ParentID)
+}
+
+// SetActive sets whether the variable and its children should be checked for changes.
+// CRC: crc-Variable.md
+func (v *Variable) SetActive(active bool) {
+	v.Active = active
 }
 
 // GetProperty returns a property value, or empty string if not set.
