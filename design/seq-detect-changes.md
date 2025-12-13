@@ -26,7 +26,11 @@ Client              Tracker             Variable            Resolver        Chan
   |                    |        |    skip variable and children |              |
   |                    |        |    return                     |              |
   |                    |        |           |                   |              |
-  |                    |        |    [if v.Active == true]      |              |
+  |                    |        |    [if v.Access == "w"]       |              |
+  |                    |        |    skip variable (write-only) |              |
+  |                    |        |    continue to children       |              |
+  |                    |        |           |                   |              |
+  |                    |        |    [if v.Active == true && v.Access != "w"]  |
   |                    |        |           |                   |              |
   |                    |        | Get()     |                   |              |
   |                    |        |---------->|                   |              |
@@ -102,6 +106,7 @@ Client              Tracker             Variable            Resolver        Chan
 ## Notes
 - Tree traversal: DetectChanges iterates over root variables and performs depth-first traversal
 - Active check: If a variable's Active field is false, it and all its descendants are skipped
+- Access check: If a variable's Access is "w" (write-only), the variable is skipped but children are still processed
 - Root variables are tracked in rootIDs set for efficient iteration
 - Child variables are found via parent's ChildIDs slice
 - Comparison uses Value JSON representation (deep equality)
@@ -114,3 +119,11 @@ Client              Tracker             Variable            Resolver        Chan
 - Internal change records (valueChanges, propertyChanges) are cleared after sorting
 - The sorted changes slice is preserved and returned
 - Returned slice is valid until the next call to DetectChanges()
+
+### Access vs Active Behavior
+| Condition | Variable Scanned | Children Scanned |
+|-----------|------------------|------------------|
+| Active=true, Access=rw | Yes | Yes |
+| Active=true, Access=r | Yes | Yes |
+| Active=true, Access=w | No | Yes |
+| Active=false | No | No |

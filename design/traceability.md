@@ -6,7 +6,7 @@
 |---------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | main.md       | crc-Tracker.md, crc-Variable.md, crc-Priority.md, crc-Change.md, crc-ObjectRegistry.md, seq-create-variable.md, seq-destroy-variable.md, seq-detect-changes.md                                                                         |
 | api.md        | crc-Tracker.md, crc-Variable.md, crc-Priority.md, crc-Change.md, crc-Resolver.md, crc-ObjectRef.md, seq-create-variable.md, seq-destroy-variable.md, seq-detect-changes.md, seq-get-value.md, seq-set-value.md, seq-set-property.md, seq-to-value-json.md   |
-| resolver.md   | crc-Resolver.md, seq-get-value.md, seq-set-value.md                                                                                                                                                                                                   |
+| resolver.md   | crc-Resolver.md, crc-Tracker.md (Call, CallWith methods), crc-Variable.md (access property), seq-get-value.md, seq-set-value.md, seq-detect-changes.md (access check)                                                                                                                                                            |
 | value-json.md | crc-ObjectRef.md, crc-ObjectRegistry.md, seq-to-value-json.md                                                                                                                                                                                         |
 
 ## Level 2 to Level 3 (Design to Implementation)
@@ -26,7 +26,9 @@ Note: All design elements are implemented in a single file (`tracker.go`) for si
 - [x] tracker.go - Change struct
 
 ### Resolver (crc-Resolver.md)
-- [x] tracker.go - Resolver interface and default implementation
+- [x] tracker.go - Resolver interface and default implementation (Get, Set)
+- [x] tracker.go - Tracker.Call (zero-arg method invocation)
+- [x] tracker.go - Tracker.CallWith (one-arg void method invocation)
 
 ### ObjectRef (crc-ObjectRef.md)
 - [x] tracker.go - ObjectRef struct and helpers (IsObjectRef, GetObjectRefID)
@@ -38,8 +40,8 @@ Note: All design elements are implemented in a single file (`tracker.go`) for si
 - [x] seq-create-variable.md -> tracker.go:CreateVariable, RegisterObject
 - [x] seq-destroy-variable.md -> tracker.go:DestroyVariable
 - [x] seq-detect-changes.md -> tracker.go:DetectChanges (includes internal sortChanges, checkVariable)
-- [x] seq-get-value.md -> tracker.go:Variable.Get, Tracker.Get
-- [x] seq-set-value.md -> tracker.go:Variable.Set, Tracker.Set
+- [x] seq-get-value.md -> tracker.go:Variable.Get, Tracker.Get, Tracker.Call (updated for path semantics)
+- [x] seq-set-value.md -> tracker.go:Variable.Set, Tracker.Set, Tracker.CallWith (updated for path semantics)
 - [x] seq-set-property.md -> tracker.go:Variable.SetProperty, Tracker.recordPropertyChange
 - [x] seq-to-value-json.md -> tracker.go:ToValueJSON, LookupObject
 
@@ -91,6 +93,8 @@ All public functions and methods in tracker.go have traceability comments:
 | ToValueJSONBytes             | crc-Tracker.md                                                                                                            | -                      |
 | Tracker.Get                  | -                                                                                                                         | seq-get-value.md       |
 | Tracker.Set                  | -                                                                                                                         | seq-set-value.md       |
+| Tracker.Call                 | crc-Resolver.md                                                                                                           | seq-get-value.md       |
+| Tracker.CallWith             | crc-Resolver.md                                                                                                           | seq-set-value.md       |
 | Variable.Get                 | -                                                                                                                         | seq-get-value.md       |
 | Variable.Set                 | -                                                                                                                         | seq-set-value.md       |
 | Variable.Parent              | crc-Variable.md                                                                                                           | -                      |
@@ -98,3 +102,6 @@ All public functions and methods in tracker.go have traceability comments:
 | Variable.GetPropertyPriority | crc-Variable.md                                                                                                           | -                      |
 | Variable.SetProperty         | -                                                                                                                         | seq-set-property.md    |
 | Variable.SetActive           | crc-Variable.md                                                                                                           | -                      |
+| Variable.GetAccess           | crc-Variable.md                                                                                                           | -                      |
+| Variable.IsReadable          | crc-Variable.md                                                                                                           | -                      |
+| Variable.IsWritable          | crc-Variable.md                                                                                                           | -                      |

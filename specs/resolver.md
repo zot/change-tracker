@@ -8,6 +8,8 @@ The resolver interface enables navigating into and modifying values within varia
 type Resolver interface {
     Get(obj any, pathElement any) (any, error)
     Set(obj any, pathElement any, value any) error
+    Call(obj any, methodName string) (any, error)
+    CallWith(obj any, methodName string, value any) error
 }
 ```
 
@@ -19,12 +21,37 @@ Variables use their tracker's `Resolver` field for `Get` and `Set` operations.
 
 ### Supported Path Elements
 
-| Path Element | Type | Description |
-|--------------|------|-------------|
-| `"fieldName"` | string | Struct field access |
-| `"mapKey"` | string | Map key lookup |
-| `"methodName()"` | string (with parens) | Method call |
-| `0`, `1`, `2`... | int | Slice/array index |
+| Path Element      | Type                 | Description              |
+|-------------------|----------------------|--------------------------|
+| `"fieldName"`     | string               | Struct field access      |
+| `"mapKey"`        | string               | Map key lookup           |
+| `"methodName()"`  | string (with parens) | Zero-arg method (getter) |
+| `"methodName(_)"` | string (with `_`)    | One-arg method (setter)  |
+| `0`, `1`, `2`...  | int                  | Slice/array index        |
+
+### Path Semantics
+
+**Zero-arg calls `methodName()`:**
+- Can appear anywhere in a path (beginning, middle, end)
+- Used for navigation (like getters)
+- Path ending in `()` is **read-only** (Get succeeds, Set fails)
+
+**One-arg calls `methodName(_)`:**
+- Can only appear at the **end** of a path
+- Used for writing values (like setters)
+- Path ending in `(_)` is **write-only** (Set succeeds, Get fails)
+
+**Examples:**
+```go
+// Getter in middle of path - Set works on terminal field
+path: "Address().City"  // Get: OK, Set: OK (City is settable field)
+
+// Path ends in getter - read-only
+path: "Value()"  // Get: OK, Set: ERROR
+
+// Path ends in setter - write-only
+path: "SetValue(_)"  // Get: ERROR, Set: OK
+```
 
 ### Get Operations
 
@@ -48,7 +75,7 @@ countVar := tracker.CreateVariable(nil, root.ID, map[string]string{"path": "coun
 count, _ := countVar.Get()  // returns 42
 ```
 
-**Method calls:**
+**Method calls (zero-arg / Call):**
 ```go
 type Counter struct { value int }
 func (c *Counter) Value() int { return c.value }
@@ -56,10 +83,10 @@ func (c *Counter) Value() int { return c.value }
 c := &Counter{value: 5}
 root := tracker.CreateVariable(c, 0, nil)
 valVar := tracker.CreateVariable(nil, root.ID, map[string]string{"path": "Value()"})
-val, _ := valVar.Get()  // returns 5
+val, _ := valVar.Get()  // calls c.Value(), returns 5
 ```
 
-Method requirements:
+Method requirements for Call:
 - Must be exported
 - Must take zero arguments
 - Must return at least one value (first return value is used)
@@ -102,14 +129,29 @@ itemVar.Set("x")  // items is now ["a", "x", "c"]
 
 Note: Index must be within bounds.
 
+**Method calls (one-arg / CallWith):**
+```go
+type Counter struct { value int }
+func (c *Counter) SetValue(v int) { c.value = v }
+
+c := &Counter{value: 5}
+root := tracker.CreateVariable(c, 0, nil)
+valVar := tracker.CreateVariable(nil, root.ID, map[string]string{"path": "SetValue(_)"})
+valVar.Set(10)  // calls c.SetValue(10), c.value is now 10
+```
+
+Method requirements for CallWith:
+- Must be exported
+- Must take exactly one argument
+- Must not return any values (void only)
+- Argument type must be assignable from the passed value
+
 ### Error Conditions
 
 **Get errors:**
 - `obj` is nil
 - Struct field not found or unexported
 - Map key not found
-- Method not found or requires arguments
-- Method returns no values
 - Index out of bounds
 - Unsupported type for navigation
 
@@ -119,6 +161,29 @@ Note: Index must be within bounds.
 - Need pointer for struct field modification
 - Index out of bounds
 - Type mismatch between value and target
+
+**Call errors:**
+- `obj` is nil
+- Method not found or unexported
+- Method requires arguments (use CallWith instead)
+- Method returns no values
+
+**CallWith errors:**
+- `obj` is nil
+- Method not found or unexported
+- Method doesn't take exactly one argument
+- Method returns values (must be void)
+- Argument type mismatch
+
+**Path-level errors (Variable Get/Set):**
+- Get on path ending in `(_)` → error (write-only path)
+- Set on path ending in `()` → error (read-only path)
+- `(_)` not at end of path → error (setter must be terminal)
+
+**Access property errors (Variable Get/Set):**
+- Get on variable with `access: "w"` → error (write-only variable)
+- Set on variable with `access: "r"` → error (read-only variable)
+- Invalid `access` value (not `r`, `w`, or `rw`) → error
 
 ## Custom Resolvers
 
@@ -155,6 +220,14 @@ func (r *JSONResolver) Set(obj any, pathElement any, value any) error {
     m[key] = value
     return nil
 }
+
+func (r *JSONResolver) Call(obj any, methodName string) (any, error) {
+    return nil, fmt.Errorf("method calls not supported for JSON data")
+}
+
+func (r *JSONResolver) CallWith(obj any, methodName string, value any) error {
+    return fmt.Errorf("method calls not supported for JSON data")
+}
 ```
 
 To use a custom resolver, set it on the tracker:
@@ -168,6 +241,50 @@ root := tracker.CreateVariable(data, 0, nil)
 child := tracker.CreateVariable(nil, root.ID, map[string]string{"path": "key"})
 val, _ := child.Get()
 ```
+
+## Variable Access Property
+
+Variables support an `access` property that controls read/write permissions:
+
+| Value | Name | Get | Set | Scanned for Changes |
+|-------|------|-----|-----|---------------------|
+| `rw`  | Read-Write (default) | ✓ | ✓ | ✓ |
+| `r`   | Read-Only | ✓ | Error | ✓ |
+| `w`   | Write-Only | Error | ✓ | ✗ |
+
+**Usage:**
+```go
+// Read-only variable - scanned for changes, but Set is an error
+readOnly := tracker.CreateVariable(nil, root.ID, map[string]string{
+    "path":   "Status",
+    "access": "r",
+})
+val, _ := readOnly.Get()    // OK
+readOnly.Set("new")         // ERROR: variable is read-only
+
+// Write-only variable - Set works, but Get fails and not scanned
+writeOnly := tracker.CreateVariable(nil, root.ID, map[string]string{
+    "path":   "Password",
+    "access": "w",
+})
+writeOnly.Set("secret")     // OK
+val, _ := writeOnly.Get()   // ERROR: variable is write-only
+
+// Default (read-write) - explicit or omitted
+readWrite := tracker.CreateVariable(nil, root.ID, map[string]string{
+    "path":   "Name",
+    "access": "rw",  // or omit entirely
+})
+```
+
+**Independence from Path Semantics:**
+
+The `access` property is independent of path-based behavior. For example, a path ending in `()` (zero-arg method) can still have `access: "w"` if calling that method produces side effects without needing to read its return value.
+
+**Change Detection:**
+
+- Variables with `access: "r"` or `access: "rw"` are included in change detection scans
+- Variables with `access: "w"` are excluded from scans (their values cannot be read)
 
 ## Path Resolution Patterns
 

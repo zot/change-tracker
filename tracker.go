@@ -40,12 +40,21 @@ func ParsePriority(s string) Priority {
 type Resolver interface {
 	// Get retrieves a value at the given path element within obj.
 	// pathElement can be:
-	//   - string: field name, map key, or method name (with "()" suffix for methods)
+	//   - string: field name or map key
 	//   - int: slice/array index (0-based)
 	Get(obj any, pathElement any) (any, error)
 
 	// Set assigns a value at the given path element within obj.
 	Set(obj any, pathElement any, value any) error
+
+	// Call invokes a zero-argument method and returns its result.
+	// Used for getter-style methods in path navigation.
+	Call(obj any, methodName string) (any, error)
+
+	// CallWith invokes a one-argument method with the given value.
+	// The method must be void (no return values).
+	// Used for setter-style methods at path terminals.
+	CallWith(obj any, methodName string, value any) error
 }
 
 // ObjectRef represents an object reference in Value JSON form.
@@ -135,12 +144,13 @@ func NewTracker() *Tracker {
 
 // Variable is a tracked variable.
 // CRC: crc-Variable.md
-// Spec: main.md, api.md
+// Spec: main.md, api.md, resolver.md
 type Variable struct {
 	ID                 int64
 	ParentID           int64
 	ChildIDs           []int64  // IDs of child variables (maintained automatically)
 	Active             bool     // whether this variable and its children are checked for changes
+	Access             string   // access mode: "r" (read-only), "w" (write-only), "rw" (read-write, default)
 	Properties         map[string]string
 	PropertyPriorities map[string]Priority
 	Path               []any    // parsed path elements
@@ -163,6 +173,7 @@ func (t *Tracker) CreateVariable(value any, parentID int64, path string, propert
 		ParentID:           parentID,
 		ChildIDs:           nil, // initialized as nil, will be allocated on first child
 		Active:             true,
+		Access:             "rw", // default: read-write
 		Properties:         make(map[string]string),
 		PropertyPriorities: make(map[string]Priority),
 		ValuePriority:      PriorityMedium,
@@ -192,11 +203,23 @@ func (t *Tracker) CreateVariable(value any, parentID int64, path string, propert
 	if pathPart != "" {
 		v.Properties["path"] = pathPart
 		v.Path = parsePath(pathPart)
+		// Validate path: setter (_) must be at terminal position
+		if err := validatePath(v.Path); err != nil {
+			panic(fmt.Sprintf("CreateVariable: %v", err))
+		}
 	}
 
 	// Set ValuePriority from priority property
 	if priorityStr, ok := v.Properties["priority"]; ok {
 		v.ValuePriority = ParsePriority(priorityStr)
+	}
+
+	// Set Access from access property
+	if accessStr, ok := v.Properties["access"]; ok {
+		if !isValidAccess(accessStr) {
+			panic(fmt.Sprintf("CreateVariable: invalid access value %q (must be r, w, or rw)", accessStr))
+		}
+		v.Access = accessStr
 	}
 
 	// Cache value and manage tree structure
@@ -205,8 +228,13 @@ func (t *Tracker) CreateVariable(value any, parentID int64, path string, propert
 		v.Value = value
 		t.rootIDs[v.ID] = true
 	} else {
-		// Child variable: compute value from parent and add to parent's ChildIDs
-		v.Value, _ = v.Get()
+		// Child variable: must have path, cannot have value
+		if value != nil {
+			panic("CreateVariable: cannot provide both parentID and value; child variables derive value from parent via path")
+		}
+		// Compute value from parent and add to parent's ChildIDs
+		// Use getValue() to bypass access checks (value is cached for child navigation)
+		v.Value, _ = v.getValue()
 		if parent := t.variables[parentID]; parent != nil {
 			parent.ChildIDs = append(parent.ChildIDs, v.ID)
 		}
@@ -275,6 +303,41 @@ func parsePath(path string) []any {
 		}
 	}
 	return result
+}
+
+// isGetterCall checks if a path element is a zero-arg method call (ends with "()")
+func isGetterCall(elem any) bool {
+	s, ok := elem.(string)
+	return ok && strings.HasSuffix(s, "()")
+}
+
+// isSetterCall checks if a path element is a one-arg method call (ends with "(_)")
+func isSetterCall(elem any) bool {
+	s, ok := elem.(string)
+	return ok && strings.HasSuffix(s, "(_)")
+}
+
+// getMethodName extracts the method name from a getter call "Name()" -> "Name"
+func getMethodName(elem any) string {
+	s := elem.(string)
+	if strings.HasSuffix(s, "()") {
+		return strings.TrimSuffix(s, "()")
+	}
+	if strings.HasSuffix(s, "(_)") {
+		return strings.TrimSuffix(s, "(_)")
+	}
+	return s
+}
+
+// validatePath checks that setter calls (_) only appear at the terminal position.
+// Returns an error if the path is invalid.
+func validatePath(path []any) error {
+	for i, elem := range path {
+		if isSetterCall(elem) && i != len(path)-1 {
+			return fmt.Errorf("setter call %q must be at end of path", elem)
+		}
+	}
+	return nil
 }
 
 // parseInt parses a string as a non-negative integer.
@@ -373,6 +436,7 @@ func (t *Tracker) DetectChanges() []Change {
 
 // checkVariable recursively checks a variable and its children for changes.
 // If the variable is inactive, it and all its descendants are skipped.
+// If the variable is write-only, it is skipped but children are still checked.
 func (t *Tracker) checkVariable(id int64) {
 	v := t.variables[id]
 	if v == nil {
@@ -384,8 +448,18 @@ func (t *Tracker) checkVariable(id int64) {
 		return
 	}
 
-	// Get current value
-	currentValue, err := v.Get()
+	// If write-only, skip this variable but continue to children
+	// (write-only variables cannot be read, so we can't detect their value changes)
+	if !v.IsReadable() {
+		// Recursively check children even though this variable is write-only
+		for _, childID := range v.ChildIDs {
+			t.checkVariable(childID)
+		}
+		return
+	}
+
+	// Get current value (use getValue to bypass access checks - we've already verified readable above)
+	currentValue, err := v.getValue()
 	if err == nil {
 		// Convert to Value JSON
 		currentJSON := t.ToValueJSON(currentValue)
@@ -774,12 +848,6 @@ func (t *Tracker) Get(obj any, pathElement any) (any, error) {
 }
 
 func (t *Tracker) getByString(rv reflect.Value, name string) (any, error) {
-	// Check for method call
-	if strings.HasSuffix(name, "()") {
-		methodName := strings.TrimSuffix(name, "()")
-		return t.callMethod(rv, methodName)
-	}
-
 	switch rv.Kind() {
 	case reflect.Struct:
 		field := rv.FieldByName(name)
@@ -820,7 +888,23 @@ func (t *Tracker) getByIndex(rv reflect.Value, index int) (any, error) {
 	}
 }
 
-func (t *Tracker) callMethod(rv reflect.Value, methodName string) (any, error) {
+// Call implements the Resolver interface for zero-arg method invocation.
+// Sequence: seq-get-value.md
+func (t *Tracker) Call(obj any, methodName string) (any, error) {
+	if obj == nil {
+		return nil, fmt.Errorf("cannot call method on nil value")
+	}
+
+	rv := reflect.ValueOf(obj)
+
+	// Dereference pointers
+	for rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return nil, fmt.Errorf("cannot call method on nil pointer")
+		}
+		rv = rv.Elem()
+	}
+
 	// Try on the value first
 	method := rv.MethodByName(methodName)
 	if !method.IsValid() {
@@ -836,7 +920,7 @@ func (t *Tracker) callMethod(rv reflect.Value, methodName string) (any, error) {
 
 	mt := method.Type()
 	if mt.NumIn() != 0 {
-		return nil, fmt.Errorf("method %q requires arguments", methodName)
+		return nil, fmt.Errorf("method %q requires arguments (use CallWith)", methodName)
 	}
 	if mt.NumOut() == 0 {
 		return nil, fmt.Errorf("method %q returns no values", methodName)
@@ -844,6 +928,55 @@ func (t *Tracker) callMethod(rv reflect.Value, methodName string) (any, error) {
 
 	results := method.Call(nil)
 	return results[0].Interface(), nil
+}
+
+// CallWith implements the Resolver interface for one-arg void method invocation.
+// Sequence: seq-set-value.md
+func (t *Tracker) CallWith(obj any, methodName string, value any) error {
+	if obj == nil {
+		return fmt.Errorf("cannot call method on nil value")
+	}
+
+	rv := reflect.ValueOf(obj)
+
+	// Dereference pointers
+	for rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return fmt.Errorf("cannot call method on nil pointer")
+		}
+		rv = rv.Elem()
+	}
+
+	// Try on the value first
+	method := rv.MethodByName(methodName)
+	if !method.IsValid() {
+		// Try on pointer to value
+		if rv.CanAddr() {
+			method = rv.Addr().MethodByName(methodName)
+		}
+	}
+
+	if !method.IsValid() {
+		return fmt.Errorf("method %q not found", methodName)
+	}
+
+	mt := method.Type()
+	if mt.NumIn() != 1 {
+		return fmt.Errorf("method %q must take exactly one argument", methodName)
+	}
+	if mt.NumOut() != 0 {
+		return fmt.Errorf("method %q must not return values (void only)", methodName)
+	}
+
+	// Check argument type compatibility
+	argType := mt.In(0)
+	argVal := reflect.ValueOf(value)
+	if !argVal.Type().AssignableTo(argType) {
+		return fmt.Errorf("argument type mismatch: cannot pass %s to %s", argVal.Type(), argType)
+	}
+
+	method.Call([]reflect.Value{argVal})
+	return nil
 }
 
 // Set implements the Resolver interface using reflection.
@@ -931,12 +1064,28 @@ func (t *Tracker) setByIndex(rv reflect.Value, index int, value any) error {
 // Get gets the variable's value by navigating from the parent's value using the path.
 // Sequence: seq-get-value.md
 func (v *Variable) Get() (any, error) {
+	// Check access - write-only variables cannot be read
+	if !v.IsReadable() {
+		return nil, fmt.Errorf("cannot Get on write-only variable (access: %q)", v.GetAccess())
+	}
+
+	// Check if path ends in setter (_) - write-only path, cannot Get
+	if len(v.Path) > 0 && isSetterCall(v.Path[len(v.Path)-1]) {
+		return nil, fmt.Errorf("cannot Get on write-only path (ends in setter)")
+	}
+
+	return v.getValue()
+}
+
+// getValue is the internal method that navigates to the value without access checks.
+// Used for caching values during CreateVariable and DetectChanges.
+func (v *Variable) getValue() (any, error) {
 	// Root variable returns cached value
 	if v.ParentID == 0 {
 		return v.Value, nil
 	}
 
-	// Get parent's value
+	// Get parent's value (use parent's cached Value directly, not Get which has access checks)
 	parent := v.tracker.GetVariable(v.ParentID)
 	if parent == nil {
 		return nil, fmt.Errorf("parent variable %d not found", v.ParentID)
@@ -946,7 +1095,17 @@ func (v *Variable) Get() (any, error) {
 
 	// Apply each path element
 	for _, elem := range v.Path {
-		val, err := v.tracker.Resolver.Get(current, elem)
+		var val any
+		var err error
+
+		if isGetterCall(elem) {
+			// Use Call for getter methods
+			val, err = v.tracker.Resolver.Call(current, getMethodName(elem))
+		} else {
+			// Use Get for fields, map keys, indices
+			val, err = v.tracker.Resolver.Get(current, elem)
+		}
+
 		if err != nil {
 			return nil, err
 		}
@@ -959,10 +1118,23 @@ func (v *Variable) Get() (any, error) {
 // Set sets the variable's value by navigating from the parent's value using the path.
 // Sequence: seq-set-value.md
 func (v *Variable) Set(value any) error {
+	// Check access - read-only variables cannot be written
+	if !v.IsWritable() {
+		return fmt.Errorf("cannot Set on read-only variable (access: %q)", v.GetAccess())
+	}
+
 	if len(v.Path) == 0 {
 		// Root or no-path variable: update Value directly
 		v.Value = value
 		return nil
+	}
+
+	// Check if path ends in getter () - for readable variables this is read-only
+	// For write-only variables, allow calling the method for side effects
+	lastElem := v.Path[len(v.Path)-1]
+	isWriteOnly := v.GetAccess() == "w"
+	if isGetterCall(lastElem) && !isWriteOnly {
+		return fmt.Errorf("cannot Set on read-only path (ends in getter)")
 	}
 
 	// Get parent's value
@@ -974,7 +1146,18 @@ func (v *Variable) Set(value any) error {
 	// Navigate to the parent of the target
 	current := parent.Value
 	for i := 0; i < len(v.Path)-1; i++ {
-		val, err := v.tracker.Resolver.Get(current, v.Path[i])
+		elem := v.Path[i]
+		var val any
+		var err error
+
+		if isGetterCall(elem) {
+			// Use Call for getter methods during navigation
+			val, err = v.tracker.Resolver.Call(current, getMethodName(elem))
+		} else {
+			// Use Get for fields, map keys, indices
+			val, err = v.tracker.Resolver.Get(current, elem)
+		}
+
 		if err != nil {
 			return err
 		}
@@ -982,7 +1165,18 @@ func (v *Variable) Set(value any) error {
 	}
 
 	// Set the value at the last path element
-	return v.tracker.Resolver.Set(current, v.Path[len(v.Path)-1], value)
+	if isSetterCall(lastElem) {
+		// Use CallWith for setter methods
+		return v.tracker.Resolver.CallWith(current, getMethodName(lastElem), value)
+	}
+	// For write-only variables with getter paths, call the method for side effects
+	if isWriteOnly && isGetterCall(lastElem) {
+		// Call the method for its side effects, ignoring return value
+		_, err := v.tracker.Resolver.Call(current, getMethodName(lastElem))
+		return err
+	}
+	// Use Set for fields, map keys, indices
+	return v.tracker.Resolver.Set(current, lastElem, value)
 }
 
 // Parent returns the parent variable, or nil if this is a root variable.
@@ -998,6 +1192,34 @@ func (v *Variable) Parent() *Variable {
 // CRC: crc-Variable.md
 func (v *Variable) SetActive(active bool) {
 	v.Active = active
+}
+
+// isValidAccess checks if an access string is valid.
+func isValidAccess(access string) bool {
+	return access == "r" || access == "w" || access == "rw"
+}
+
+// GetAccess returns the access mode of the variable.
+// CRC: crc-Variable.md
+func (v *Variable) GetAccess() string {
+	if v.Access == "" {
+		return "rw" // default
+	}
+	return v.Access
+}
+
+// IsReadable returns true if the variable allows reading (access "r" or "rw").
+// CRC: crc-Variable.md
+func (v *Variable) IsReadable() bool {
+	access := v.GetAccess()
+	return access == "r" || access == "rw"
+}
+
+// IsWritable returns true if the variable allows writing (access "w" or "rw").
+// CRC: crc-Variable.md
+func (v *Variable) IsWritable() bool {
+	access := v.GetAccess()
+	return access == "w" || access == "rw"
 }
 
 // GetProperty returns a property value, or empty string if not set.
@@ -1036,8 +1258,21 @@ func (v *Variable) SetProperty(name, value string) {
 	switch baseName {
 	case "path":
 		v.Path = parsePath(value)
+		// Validate path: setter (_) must be at terminal position
+		if err := validatePath(v.Path); err != nil {
+			panic(fmt.Sprintf("SetProperty: %v", err))
+		}
 	case "priority":
 		v.ValuePriority = ParsePriority(value)
+	case "access":
+		if value != "" && !isValidAccess(value) {
+			panic(fmt.Sprintf("SetProperty: invalid access value %q (must be r, w, or rw)", value))
+		}
+		if value == "" {
+			v.Access = "rw" // default when removed
+		} else {
+			v.Access = value
+		}
 	}
 }
 

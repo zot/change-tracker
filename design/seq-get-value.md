@@ -15,6 +15,18 @@ Client              Variable            Tracker             Resolver
   |  Get()             |                    |                   |
   |------------------->|                    |                   |
   |                    |                    |                   |
+  |                    |    [if Access == "w"]                  |
+  |                    | return error       |                   |
+  |                    | (write-only var)   |                   |
+  |                    |-------.            |                   |
+  |                    |<------'            |                   |
+  |                    |                    |                   |
+  |                    |    [if path ends with "(_)"]           |
+  |                    | return error       |                   |
+  |                    | (write-only path)  |                   |
+  |                    |-------.            |                   |
+  |                    |<------'            |                   |
+  |                    |                    |                   |
   |                    |    [if root: ParentID==0]              |
   |                    | return Value       |                   |
   |                    |-------.            |                   |
@@ -32,9 +44,17 @@ Client              Variable            Tracker             Resolver
   |                    |<-------'           |                   |
   |                    |                    |                   |
   |                    |  [for each elem in Path]               |
+  |                    |                    |                   |
+  |                    |    [if elem ends with "()"]            |
+  |                    |                    | Call(val,         |
+  |                    |                    |   methodName)     |
+  |                    |----------------------------------->|
+  |                    |                        nextVal     |
+  |                    |<-----------------------------------|
+  |                    |                    |                   |
+  |                    |    [else: field/key/index]             |
   |                    |                    | Get(val, elem)    |
   |                    |----------------------------------->|
-  |                    |                                    |
   |                    |                        nextVal     |
   |                    |<-----------------------------------|
   |                    |                    |                   |
@@ -54,9 +74,13 @@ Client              Variable            Tracker             Resolver
 ```
 
 ## Notes
+- Access check is first: `access: "w"` (write-only) returns error immediately
 - Root variables return their cached Value directly
 - Child variables navigate from parent's cached Value
-- Each path element is resolved via tracker's Resolver
+- Path ending in `(_)` is write-only; Get returns error
+- Path elements ending in `()` use Call for zero-arg method invocation
+- Other path elements use Get for field/key/index access
 - The result is cached in Variable.Value for child navigation
 - Errors propagate if any path element resolution fails
 - Path elements can be strings (field, key, method) or ints (index)
+- Access property is independent of path semantics (both can restrict Get)

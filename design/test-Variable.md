@@ -65,6 +65,46 @@
 | V6.5 | Inactive skips descendants | parent SetActive(false) | children not in changes |
 | V6.6 | Re-activate | SetActive(false) then true | variable in changes again |
 
+### Access Property
+| ID | Scenario | Input | Expected Output |
+|----|----------|-------|-----------------|
+| V8.1 | Access defaults to rw | CreateVariable | GetAccess() == "rw" |
+| V8.2 | Set access via property | SetProperty("access", "r") | GetAccess() == "r" |
+| V8.3 | Set write-only access | SetProperty("access", "w") | GetAccess() == "w" |
+| V8.4 | Read-only Get succeeds | access: "r", Get() | returns value |
+| V8.5 | Read-only Set fails | access: "r", Set(v) | error: read-only |
+| V8.6 | Write-only Get fails | access: "w", Get() | error: write-only |
+| V8.7 | Write-only Set succeeds | access: "w", Set(v) | value updated |
+| V8.8 | Read-write Get succeeds | access: "rw", Get() | returns value |
+| V8.9 | Read-write Set succeeds | access: "rw", Set(v) | value updated |
+| V8.10 | Invalid access value | SetProperty("access", "x") | error: invalid access |
+| V8.11 | IsReadable for rw | access: "rw" | IsReadable() == true |
+| V8.12 | IsReadable for r | access: "r" | IsReadable() == true |
+| V8.13 | IsReadable for w | access: "w" | IsReadable() == false |
+| V8.14 | IsWritable for rw | access: "rw" | IsWritable() == true |
+| V8.15 | IsWritable for w | access: "w" | IsWritable() == true |
+| V8.16 | IsWritable for r | access: "r" | IsWritable() == false |
+| V8.17 | Access via query string | path: "Field?access=r" | GetAccess() == "r" |
+
+### Access and Change Detection
+| ID | Scenario | Input | Expected Output |
+|----|----------|-------|-----------------|
+| V9.1 | Read-only scanned | access: "r", value changes | appears in DetectChanges |
+| V9.2 | Write-only not scanned | access: "w", value changes | NOT in DetectChanges |
+| V9.3 | Read-write scanned | access: "rw", value changes | appears in DetectChanges |
+| V9.4 | Write-only children scanned | parent access: "w", child access: "rw" | child in DetectChanges |
+| V9.5 | Access + Active combo | access: "r", Active: false | NOT in DetectChanges |
+
+### Access vs Path Semantics
+| ID | Scenario | Input | Expected Output |
+|----|----------|-------|-----------------|
+| V10.1 | Access r + path () | access: "r", path: "Value()" | Get: OK, Set: error (access) |
+| V10.2 | Access w + path () | access: "w", path: "Value()" | Get: error (access), Set: OK (calls method) |
+| V10.3 | Access r + path (_) | access: "r", path: "SetX(_)" | Get: error (path), Set: error (access) |
+| V10.4 | Access w + path (_) | access: "w", path: "SetX(_)" | Get: error (both), Set: OK |
+| V10.5 | Access rw + path () | access: "rw", path: "Value()" | Get: OK, Set: error (path restricts for readable vars) |
+| V10.6 | Write-only method side effect | access: "w", path: "Trigger()" | Set: calls Trigger(), side effect occurs |
+
 ### ChildIDs
 | ID | Scenario | Input | Expected Output |
 |----|----------|-------|-----------------|

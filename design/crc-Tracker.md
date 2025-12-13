@@ -32,6 +32,8 @@
 - ToValueJSONBytes(value): serializes value to JSON bytes
 - Get(obj, pathElement): resolver implementation using reflection
 - Set(obj, pathElement, value): resolver implementation using reflection
+- Call(obj, methodName): resolver implementation - invokes zero-arg method via reflection
+- CallWith(obj, methodName, value): resolver implementation - invokes one-arg void method via reflection
 
 ## Collaborators
 - Variable: creates and manages variables

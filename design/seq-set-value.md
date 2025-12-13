@@ -15,6 +15,24 @@ Client              Variable            Tracker             Resolver
   |  Set(newValue)     |                    |                   |
   |------------------->|                    |                   |
   |                    |                    |                   |
+  |                    |    [if Access == "r"]                  |
+  |                    | error: read-only   |                   |
+  |                    | variable           |                   |
+  |                    |-------.            |                   |
+  |                    |<------'            |                   |
+  |                    |                    |                   |
+  |                    |    [if Access != "w" AND path ends with "()"]  |
+  |                    | error: read-only   |                   |
+  |                    | path (getter)      |                   |
+  |                    |-------.            |                   |
+  |                    |<------'            |                   |
+  |                    |                    |                   |
+  |                    |    [if "(_)" not at end of path]       |
+  |                    | error: setter must |                   |
+  |                    | be terminal        |                   |
+  |                    |-------.            |                   |
+  |                    |<------'            |                   |
+  |                    |                    |                   |
   |                    |    [if root: ParentID==0]              |
   |                    | error: cannot set  |                   |
   |                    | root directly      |                   |
@@ -38,6 +56,15 @@ Client              Variable            Tracker             Resolver
   |                    |                    |                   |
   |                    |  [for each elem in Path[:-1]]          |
   |                    |  (all but last)    |                   |
+  |                    |                    |                   |
+  |                    |    [if elem ends with "()"]            |
+  |                    |                    | Call(val,         |
+  |                    |                    |   methodName)     |
+  |                    |----------------------------------->|
+  |                    |                        nextVal     |
+  |                    |<-----------------------------------|
+  |                    |                    |                   |
+  |                    |    [else: field/key/index]             |
   |                    |                    | Get(val, elem)    |
   |                    |----------------------------------->|
   |                    |                        nextVal     |
@@ -53,9 +80,26 @@ Client              Variable            Tracker             Resolver
   |                    |--------.           |                   |
   |                    |<-------'           |                   |
   |                    |                    |                   |
+  |                    |    [if lastElem ends with "(_)"]       |
+  |                    |                    | CallWith(val,     |
+  |                    |                    |   methodName,     |
+  |                    |                    |   newValue)       |
+  |                    |----------------------------------->|
+  |                    |                        nil/error   |
+  |                    |<-----------------------------------|
+  |                    |                    |                   |
+  |                    |    [else if Access == "w" AND lastElem ends with "()"]  |
+  |                    |                    | Call(val,         |
+  |                    |                    |   methodName)     |
+  |                    |                    | (side effect)     |
+  |                    |----------------------------------->|
+  |                    |                        val/error   |
+  |                    |<-----------------------------------|
+  |                    |                    |                   |
+  |                    |    [else: field/key/index]             |
   |                    |                    | Set(val,          |
-  |                    |                    | lastElem,         |
-  |                    |                    | newValue)         |
+  |                    |                    |   lastElem,       |
+  |                    |                    |   newValue)       |
   |                    |----------------------------------->|
   |                    |                        nil/error   |
   |                    |<-----------------------------------|
@@ -66,10 +110,17 @@ Client              Variable            Tracker             Resolver
 ```
 
 ## Notes
+- Access check is first: `access: "r"` (read-only) returns error immediately
 - Cannot set root variables directly (they hold external values)
+- Path ending in `()` is read-only for readable variables (access "r" or "rw"); Set returns error
+- For write-only variables (`access: "w"`), path ending in `()` allows Set to call the method for side effects
+- Path with `(_)` not at end returns error (setter must be terminal)
 - Navigates to parent of target using all but last path element
-- Uses resolver's Set to assign value at final path element
+- Path elements ending in `()` use Call for navigation
+- If last element ends in `(_)`, uses CallWith to invoke setter method
+- Otherwise uses resolver's Set to assign value at final path element
 - Value cache is NOT updated (will update on next Get or DetectChanges)
 - Struct field setting requires pointer to struct
 - Slice index must be within bounds
 - Map keys can be set freely
+- Access property is independent of path semantics (both can restrict Set)
