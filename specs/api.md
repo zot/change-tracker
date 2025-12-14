@@ -45,6 +45,7 @@ type Variable struct {
     ParentID           int64
     ChildIDs           []int64   // IDs of child variables (maintained automatically)
     Active             bool      // whether this variable and its children are checked for changes (default: true)
+    Access             string    // access mode: "r", "w", "rw" (default), or "action"
     Properties         map[string]string
     PropertyPriorities map[string]Priority
     Path               []any     // parsed path elements
@@ -140,17 +141,22 @@ func (t *Tracker) CreateVariable(value any, parentID int64, path string, propert
 **Behavior:**
 1. Assigns a unique ID to the variable (incrementing from 1)
 2. Sets `Active` to true (default)
-3. For root variables (parentID == 0): adds the variable ID to the root variable set
-4. For child variables: adds the new variable's ID to the parent's `ChildIDs`
-5. Merges properties: starts with `properties` map, overlays properties from path query
-6. Parses the path portion into path elements
-7. Sets `ValuePriority` from the `priority` property (if present)
-8. For root variables: caches the provided value
-9. For child variables: calls `Get()` to compute and cache the value from parent
-10. If the cached value is a pointer or map, registers it in the object registry
-11. Converts cached value to Value JSON and stores for change detection
-12. If `properties` is nil, initializes an empty map
-13. Stores the variable in the tracker
+3. Sets `Access` to "rw" (default), or from the `access` property if provided
+4. For root variables (parentID == 0): adds the variable ID to the root variable set
+5. For child variables: adds the new variable's ID to the parent's `ChildIDs`
+6. Merges properties: starts with `properties` map, overlays properties from path query
+7. Parses the path portion into path elements
+8. Validates access/path combination (see resolver.md for rules):
+   - `(_)` at terminal requires `access: "w"` or `access: "action"` (not `r` or `rw`)
+   - `()` at terminal requires `access: "r"` or `access: "action"` (not `w` or `rw`)
+9. Sets `ValuePriority` from the `priority` property (if present)
+10. For root variables: caches the provided value
+11. For child variables with readable access (`r`, `rw`, `w`): calls `Get()` to compute and cache the value from parent
+12. For child variables with `action` access: skips initial value computation (avoids premature action invocation)
+13. If the cached value is a pointer or map, registers it in the object registry
+14. Converts cached value to Value JSON and stores for change detection (skipped for `action` access)
+15. If `properties` is nil, initializes an empty map
+16. Stores the variable in the tracker
 
 ### GetVariable
 
@@ -445,6 +451,7 @@ Sets a property. Empty value removes the property.
 **Special Properties:**
 - Setting `priority` (values: `"low"`, `"medium"`, `"high"`) updates `ValuePriority`
 - Setting `path` re-parses the path and updates the `Path` field
+- Setting `access` (values: `"r"`, `"w"`, `"rw"`, `"action"`) updates `Access`
 
 **Change Tracking:**
 - Records the property change in the tracker (property name added to changed properties)

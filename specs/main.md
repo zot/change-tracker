@@ -42,6 +42,7 @@ Each variable has:
 - **ParentID** - ID of parent variable (0 = no parent, making it a "root" variable)
 - **ChildIDs** - Slice of child variable IDs (maintained automatically by the tracker)
 - **Active** - Whether this variable and its children should be checked for changes (default: true)
+- **Access** - Access mode: `"rw"` (read-write, default), `"r"` (read-only), `"w"` (write-only), or `"action"` (action trigger)
 - **Properties** - Map of string key-value metadata
 - **PropertyPriorities** - Map of property names to their priorities
 - **Path** - Parsed path elements (e.g., `"Address.City"` becomes `["Address", "City"]`)
@@ -63,6 +64,26 @@ The **Active** field controls whether a variable participates in change detectio
 - When `Active` is false, the variable and all its descendants are skipped during change detection
 - Setting a variable to inactive effectively "prunes" that entire subtree from change detection
 - The Active field can be toggled at any time; changes take effect on the next `DetectChanges()` call
+
+### Access Modes
+
+The **Access** field controls read/write permissions and initialization behavior:
+
+| Mode     | Get | Set | Change Detection | Initial Value Computed |
+|----------|-----|-----|------------------|------------------------|
+| `rw`     | ✓   | ✓   | ✓                | ✓                      |
+| `r`      | ✓   | ✗   | ✓                | ✓                      |
+| `w`      | ✗   | ✓   | ✗                | ✓                      |
+| `action` | ✗   | ✓   | ✗                | ✗                      |
+
+- **rw** (default): Full read-write access, included in change detection. Paths must not end in `()` or `(_)`.
+- **r**: Read-only, included in change detection but `Set()` fails. Paths may end in `()`.
+- **w**: Write-only, `Get()` fails and excluded from change detection. Paths may end in `(_)`.
+- **action**: Like write-only, but initial value is NOT computed during `CreateVariable`. Paths may end in `()` or `(_)`.
+
+The `action` mode is designed for variables that trigger side effects (like calling `AddContact(_)`) where navigating the path during creation would invoke the action prematurely.
+
+**Path restrictions:** Paths ending in `(_)` require `access: "w"` or `access: "action"`. Paths ending in `()` require `access: "r"` or `access: "action"`.
 
 ### Priorities
 

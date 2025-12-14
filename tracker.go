@@ -217,9 +217,14 @@ func (t *Tracker) CreateVariable(value any, parentID int64, path string, propert
 	// Set Access from access property
 	if accessStr, ok := v.Properties["access"]; ok {
 		if !isValidAccess(accessStr) {
-			panic(fmt.Sprintf("CreateVariable: invalid access value %q (must be r, w, or rw)", accessStr))
+			panic(fmt.Sprintf("CreateVariable: invalid access value %q (must be r, w, rw, or action)", accessStr))
 		}
 		v.Access = accessStr
+	}
+
+	// Validate access/path combination
+	if err := validateAccessPath(v.GetAccess(), v.Path); err != nil {
+		panic(fmt.Sprintf("CreateVariable: %v", err))
 	}
 
 	// Cache value and manage tree structure
@@ -232,19 +237,29 @@ func (t *Tracker) CreateVariable(value any, parentID int64, path string, propert
 		if value != nil {
 			panic("CreateVariable: cannot provide both parentID and value; child variables derive value from parent via path")
 		}
-		// Compute value from parent and add to parent's ChildIDs
-		// Use getValue() to bypass access checks (value is cached for child navigation)
-		v.Value, _ = v.getValue()
+		// Add to parent's ChildIDs
 		if parent := t.variables[parentID]; parent != nil {
 			parent.ChildIDs = append(parent.ChildIDs, v.ID)
 		}
+		// For action variables, don't compute the value during creation
+		// (this would invoke action methods like addContact() prematurely)
+		// Action variables are not scanned for changes anyway
+		if !v.IsAction() {
+			// Compute value from parent via path
+			// Use getValue() to bypass access checks (value is cached for child navigation)
+			v.Value, _ = v.getValue()
+		}
 	}
 
-	// Register object if pointer or map
-	t.registerIfNeeded(v.Value, v.ID)
+	// Register object if pointer or map (skip for action as there's no initial value)
+	if !v.IsAction() {
+		t.registerIfNeeded(v.Value, v.ID)
+	}
 
-	// Cache Value JSON for change detection
-	v.ValueJSON = t.ToValueJSON(v.Value)
+	// Cache Value JSON for change detection (skip for non-readable: w and action)
+	if v.IsReadable() {
+		v.ValueJSON = t.ToValueJSON(v.Value)
+	}
 
 	t.variables[v.ID] = v
 	return v
@@ -337,6 +352,37 @@ func validatePath(path []any) error {
 			return fmt.Errorf("setter call %q must be at end of path", elem)
 		}
 	}
+	return nil
+}
+
+// validateAccessPath checks that the access mode is compatible with the path ending.
+// Returns an error if the combination is invalid.
+// Rules:
+//   - access "r" or "rw": path must not end with (_) (cannot read from setter)
+//   - access "w" or "rw": path must not end with () (use action for zero-arg methods)
+//   - access "action": any path ending is allowed
+func validateAccessPath(access string, path []any) error {
+	if len(path) == 0 {
+		return nil
+	}
+	lastElem := path[len(path)-1]
+
+	// Check for getter call at terminal
+	if isGetterCall(lastElem) {
+		// () paths require access "r" or "action" (not "w" or "rw")
+		if access == "w" || access == "rw" {
+			return fmt.Errorf("path ending in %q requires access \"r\" or \"action\", not %q", lastElem, access)
+		}
+	}
+
+	// Check for setter call at terminal
+	if isSetterCall(lastElem) {
+		// (_) paths require access "w" or "action" (not "r" or "rw")
+		if access == "r" || access == "rw" {
+			return fmt.Errorf("path ending in %q requires access \"w\" or \"action\", not %q", lastElem, access)
+		}
+	}
+
 	return nil
 }
 
@@ -436,7 +482,7 @@ func (t *Tracker) DetectChanges() []Change {
 
 // checkVariable recursively checks a variable and its children for changes.
 // If the variable is inactive, it and all its descendants are skipped.
-// If the variable is write-only, it is skipped but children are still checked.
+// If the variable is non-readable (write-only or action), it is skipped but children are still checked.
 func (t *Tracker) checkVariable(id int64) {
 	v := t.variables[id]
 	if v == nil {
@@ -448,10 +494,10 @@ func (t *Tracker) checkVariable(id int64) {
 		return
 	}
 
-	// If write-only, skip this variable but continue to children
-	// (write-only variables cannot be read, so we can't detect their value changes)
+	// If non-readable (write-only or action), skip this variable but continue to children
+	// (non-readable variables cannot be read, so we can't detect their value changes)
 	if !v.IsReadable() {
-		// Recursively check children even though this variable is write-only
+		// Recursively check children even though this variable is non-readable
 		for _, childID := range v.ChildIDs {
 			t.checkVariable(childID)
 		}
@@ -1064,9 +1110,9 @@ func (t *Tracker) setByIndex(rv reflect.Value, index int, value any) error {
 // Get gets the variable's value by navigating from the parent's value using the path.
 // Sequence: seq-get-value.md
 func (v *Variable) Get() (any, error) {
-	// Check access - write-only variables cannot be read
+	// Check access - non-readable variables (write-only or action) cannot be read
 	if !v.IsReadable() {
-		return nil, fmt.Errorf("cannot Get on write-only variable (access: %q)", v.GetAccess())
+		return nil, fmt.Errorf("cannot Get on non-readable variable (access: %q)", v.GetAccess())
 	}
 
 	// Check if path ends in setter (_) - write-only path, cannot Get
@@ -1130,10 +1176,10 @@ func (v *Variable) Set(value any) error {
 	}
 
 	// Check if path ends in getter () - for readable variables this is read-only
-	// For write-only variables, allow calling the method for side effects
+	// For action variables, allow calling the method for side effects
 	lastElem := v.Path[len(v.Path)-1]
-	isWriteOnly := v.GetAccess() == "w"
-	if isGetterCall(lastElem) && !isWriteOnly {
+	isAction := v.IsAction()
+	if isGetterCall(lastElem) && !isAction {
 		return fmt.Errorf("cannot Set on read-only path (ends in getter)")
 	}
 
@@ -1169,8 +1215,8 @@ func (v *Variable) Set(value any) error {
 		// Use CallWith for setter methods
 		return v.tracker.Resolver.CallWith(current, getMethodName(lastElem), value)
 	}
-	// For write-only variables with getter paths, call the method for side effects
-	if isWriteOnly && isGetterCall(lastElem) {
+	// For action variables with getter paths, call the method for side effects
+	if isAction && isGetterCall(lastElem) {
 		// Call the method for its side effects, ignoring return value
 		_, err := v.tracker.Resolver.Call(current, getMethodName(lastElem))
 		return err
@@ -1196,7 +1242,7 @@ func (v *Variable) SetActive(active bool) {
 
 // isValidAccess checks if an access string is valid.
 func isValidAccess(access string) bool {
-	return access == "r" || access == "w" || access == "rw"
+	return access == "r" || access == "w" || access == "rw" || access == "action"
 }
 
 // GetAccess returns the access mode of the variable.
@@ -1215,11 +1261,17 @@ func (v *Variable) IsReadable() bool {
 	return access == "r" || access == "rw"
 }
 
-// IsWritable returns true if the variable allows writing (access "w" or "rw").
+// IsWritable returns true if the variable allows writing (access "w", "rw", or "action").
 // CRC: crc-Variable.md
 func (v *Variable) IsWritable() bool {
 	access := v.GetAccess()
-	return access == "w" || access == "rw"
+	return access == "w" || access == "rw" || access == "action"
+}
+
+// IsAction returns true if the variable is an action trigger (access "action").
+// CRC: crc-Variable.md
+func (v *Variable) IsAction() bool {
+	return v.GetAccess() == "action"
 }
 
 // GetProperty returns a property value, or empty string if not set.
@@ -1262,17 +1314,25 @@ func (v *Variable) SetProperty(name, value string) {
 		if err := validatePath(v.Path); err != nil {
 			panic(fmt.Sprintf("SetProperty: %v", err))
 		}
+		// Validate access/path combination
+		if err := validateAccessPath(v.GetAccess(), v.Path); err != nil {
+			panic(fmt.Sprintf("SetProperty: %v", err))
+		}
 	case "priority":
 		v.ValuePriority = ParsePriority(value)
 	case "access":
 		if value != "" && !isValidAccess(value) {
-			panic(fmt.Sprintf("SetProperty: invalid access value %q (must be r, w, or rw)", value))
+			panic(fmt.Sprintf("SetProperty: invalid access value %q (must be r, w, rw, or action)", value))
 		}
-		if value == "" {
-			v.Access = "rw" // default when removed
-		} else {
-			v.Access = value
+		newAccess := value
+		if newAccess == "" {
+			newAccess = "rw" // default when removed
 		}
+		// Validate access/path combination
+		if err := validateAccessPath(newAccess, v.Path); err != nil {
+			panic(fmt.Sprintf("SetProperty: %v", err))
+		}
+		v.Access = newAccess
 	}
 }
 

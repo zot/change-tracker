@@ -899,13 +899,13 @@ func TestVariable_Get(t *testing.T) {
 	}
 }
 
-// V1.5: Method call get
+// V1.5: Method call get (requires access "r" for () paths)
 func TestVariable_GetMethod(t *testing.T) {
 	tr := NewTracker()
 	person := &Person{Name: "Alice", Age: 30}
 	parent := tr.CreateVariable(person, 0, "", nil)
 
-	methodChild := tr.CreateVariable(nil, parent.ID, "GetName()", nil)
+	methodChild := tr.CreateVariable(nil, parent.ID, "GetName()?access=r", nil)
 	val, err := methodChild.Get()
 	if err != nil {
 		t.Errorf("method Get() failed: %v", err)
@@ -2311,14 +2311,14 @@ func TestPathSemantics_GetterMidPath(t *testing.T) {
 	}
 }
 
-// PM3-PM4: Path ends in getter
+// PM3-PM4: Path ends in getter (requires access "r" for () paths)
 func TestPathSemantics_GetterTerminal(t *testing.T) {
 	tr := NewTracker()
 	counter := &Counter{value: 42}
 	root := tr.CreateVariable(counter, 0, "", nil)
 
-	// PM3: Get on path ending in getter - OK
-	valVar := tr.CreateVariable(nil, root.ID, "Value()", nil)
+	// PM3: Get on path ending in getter - OK (requires access "r")
+	valVar := tr.CreateVariable(nil, root.ID, "Value()?access=r", nil)
 	val, err := valVar.Get()
 	if err != nil || val != 42 {
 		t.Errorf("PM3 Get Value(): err=%v, val=%v", err, val)
@@ -2331,14 +2331,14 @@ func TestPathSemantics_GetterTerminal(t *testing.T) {
 	}
 }
 
-// PM5-PM6: Path ends in setter
+// PM5-PM6: Path ends in setter (requires access "w" or "action" for (_) paths)
 func TestPathSemantics_SetterTerminal(t *testing.T) {
 	tr := NewTracker()
 	counter := &Counter{value: 0}
 	root := tr.CreateVariable(counter, 0, "", nil)
 
-	// PM5: Set on path ending in setter - OK
-	setVar := tr.CreateVariable(nil, root.ID, "SetValue(_)", nil)
+	// PM5: Set on path ending in setter - OK (requires access "w" or "action")
+	setVar := tr.CreateVariable(nil, root.ID, "SetValue(_)?access=w", nil)
 	err := setVar.Set(42)
 	if err != nil || counter.value != 42 {
 		t.Errorf("PM5 Set SetValue(_): err=%v, value=%d", err, counter.value)
@@ -2368,14 +2368,14 @@ func TestPathSemantics_SetterNotTerminal(t *testing.T) {
 	tr.CreateVariable(nil, root.ID, "SetInner(_).value", nil)
 }
 
-// PM9: Chain getters
+// PM9: Chain getters (requires access "r" for paths ending in ())
 func TestPathSemantics_ChainGetters(t *testing.T) {
 	tr := NewTracker()
 	outer := &Outer{inner: &Inner{value: 99}}
 	root := tr.CreateVariable(outer, 0, "", nil)
 
-	// PM9: Chain of getter calls
-	valVar := tr.CreateVariable(nil, root.ID, "Inner().Value()", nil)
+	// PM9: Chain of getter calls (requires access "r")
+	valVar := tr.CreateVariable(nil, root.ID, "Inner().Value()?access=r", nil)
 	val, err := valVar.Get()
 	if err != nil || val != 99 {
 		t.Errorf("PM9 Get Inner().Value(): err=%v, val=%v", err, val)
@@ -2388,15 +2388,15 @@ func TestPathElement_MethodSyntax(t *testing.T) {
 	counter := &Counter{value: 42, name: "test"}
 	root := tr.CreateVariable(counter, 0, "", nil)
 
-	// PT3: String with "()" uses Call
-	getterVar := tr.CreateVariable(nil, root.ID, "Value()", nil)
+	// PT3: String with "()" uses Call (requires access "r")
+	getterVar := tr.CreateVariable(nil, root.ID, "Value()?access=r", nil)
 	val, err := getterVar.Get()
 	if err != nil || val != 42 {
 		t.Errorf("PT3 getter path element: err=%v, val=%v", err, val)
 	}
 
-	// PT4: String with "(_)" uses CallWith
-	setterVar := tr.CreateVariable(nil, root.ID, "SetName(_)", nil)
+	// PT4: String with "(_)" uses CallWith (requires access "w" or "action")
+	setterVar := tr.CreateVariable(nil, root.ID, "SetName(_)?access=w", nil)
 	err = setterVar.Set("updated")
 	if err != nil || counter.name != "updated" {
 		t.Errorf("PT4 setter path element: err=%v, name=%s", err, counter.name)
@@ -2612,7 +2612,7 @@ func TestAccess_ChangeDetection(t *testing.T) {
 	}
 }
 
-// V10.1-V10.6: Access vs Path Semantics
+// V10.1-V10.6: Access vs Path Semantics (updated for path restrictions)
 func TestAccess_VsPathSemantics(t *testing.T) {
 	tr := NewTracker()
 	counter := &Counter{value: 42}
@@ -2629,27 +2629,26 @@ func TestAccess_VsPathSemantics(t *testing.T) {
 		t.Error("V10.1: Set should fail (access blocks)")
 	}
 
-	// V10.2: access=w + path () -> Get: error (access), Set: OK (calls method for side effect)
-	v2 := tr.CreateVariable(nil, root.ID, "Value()?access=w", nil)
-	_, err = v2.Get()
-	if err == nil {
-		t.Error("V10.2: Get should fail (access blocks)")
-	}
-	err = v2.Set(nil) // Calls Value() for side effect
-	if err != nil {
-		t.Errorf("V10.2: Set should succeed (calls method for side effect), err=%v", err)
-	}
+	// V10.2: access=w + path () -> NOW INVALID (CreateVariable should panic)
+	// (Previously tested calling method for side effect, but now w + () is rejected)
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("V10.2: access=w + path () should panic at CreateVariable")
+			}
+		}()
+		tr.CreateVariable(nil, root.ID, "Value()?access=w", nil)
+	}()
 
-	// V10.3: access=r + path (_) -> Get: error (path), Set: error (access)
-	v3 := tr.CreateVariable(nil, root.ID, "SetValue(_)?access=r", nil)
-	_, err = v3.Get()
-	if err == nil {
-		t.Error("V10.3: Get should fail (path blocks)")
-	}
-	err = v3.Set(100)
-	if err == nil {
-		t.Error("V10.3: Set should fail (access blocks)")
-	}
+	// V10.3: access=r + path (_) -> NOW INVALID (CreateVariable should panic)
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("V10.3: access=r + path (_) should panic at CreateVariable")
+			}
+		}()
+		tr.CreateVariable(nil, root.ID, "SetValue(_)?access=r", nil)
+	}()
 
 	// V10.4: access=w + path (_) -> Get: error (both), Set: OK
 	v4 := tr.CreateVariable(nil, root.ID, "SetValue(_)?access=w", nil)
@@ -2662,45 +2661,48 @@ func TestAccess_VsPathSemantics(t *testing.T) {
 		t.Errorf("V10.4: Set should succeed, err=%v, value=%d", err, counter.value)
 	}
 
-	// V10.5: access=rw + path () -> Get: OK, Set: error (path restricts for readable vars)
-	v5 := tr.CreateVariable(nil, root.ID, "Value()?access=rw", nil)
-	val, err = v5.Get()
-	if err != nil || val != 100 {
-		t.Errorf("V10.5: Get should succeed, err=%v, val=%v", err, val)
-	}
-	err = v5.Set(200)
+	// V10.5: access=rw + path () -> NOW INVALID (CreateVariable should panic)
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("V10.5: access=rw + path () should panic at CreateVariable")
+			}
+		}()
+		tr.CreateVariable(nil, root.ID, "Value()?access=rw", nil)
+	}()
+
+	// V10.6: access=action + path () -> Get: error (access), Set: OK (calls method)
+	counter.value = 100 // reset
+	v6 := tr.CreateVariable(nil, root.ID, "Value()?access=action", nil)
+	_, err = v6.Get()
 	if err == nil {
-		t.Error("V10.5: Set should fail (path blocks for readable vars)")
+		t.Error("V10.6: Get should fail (access blocks)")
+	}
+	err = v6.Set(nil) // Calls Value() for side effect
+	if err != nil {
+		t.Errorf("V10.6: Set should succeed (calls method for side effect), err=%v", err)
 	}
 }
 
-// V10.6 / SE1-SE4: Write-only method side effects
-func TestAccess_WriteOnlyMethodSideEffect(t *testing.T) {
+// SE1-SE4: Action method side effects (updated: now requires access=action for () paths)
+func TestAccess_ActionMethodSideEffect(t *testing.T) {
 	tr := NewTracker()
-
-	// Create a type with a side-effect method
-	type Triggerable struct {
-		triggered bool
-		count     int
-	}
-	trigger := &Triggerable{}
 
 	// Define a method that has side effects
 	// Since we can't define methods in tests, we'll use Counter which has Value()
 	counter := &Counter{value: 0}
 	root := tr.CreateVariable(counter, 0, "", nil)
 
-	// SE1-SE4: Write-only with getter path calls method for side effect
-	writeOnlyGetter := tr.CreateVariable(nil, root.ID, "Value()?access=w", nil)
+	// SE1-SE4: Action with getter path calls method for side effect
+	actionGetter := tr.CreateVariable(nil, root.ID, "Value()?access=action", nil)
 
 	// Set should call Value() method (for side effect)
-	// Note: Value() returns the value, but for write-only we ignore the return
-	err := writeOnlyGetter.Set(nil)
+	// Note: Value() returns the value, but for action we ignore the return
+	err := actionGetter.Set(nil)
 	if err != nil {
-		t.Errorf("Write-only Set on getter should call method, err=%v", err)
+		t.Errorf("Action Set on getter should call method, err=%v", err)
 	}
 
 	// Verify the method was called by checking no error occurred
 	// (The actual side effect verification would need a method that modifies state)
-	_ = trigger // Just to use the variable
 }

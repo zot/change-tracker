@@ -15,9 +15,9 @@ Client              Variable            Tracker             Resolver
   |  Get()             |                    |                   |
   |------------------->|                    |                   |
   |                    |                    |                   |
-  |                    |    [if Access == "w"]                  |
+  |                    |    [if Access == "w" or "action"]      |
   |                    | return error       |                   |
-  |                    | (write-only var)   |                   |
+  |                    | (not readable)     |                   |
   |                    |-------.            |                   |
   |                    |<------'            |                   |
   |                    |                    |                   |
@@ -74,7 +74,7 @@ Client              Variable            Tracker             Resolver
 ```
 
 ## Notes
-- Access check is first: `access: "w"` (write-only) returns error immediately
+- Access check is first: `access: "w"` (write-only) or `access: "action"` returns error immediately
 - Root variables return their cached Value directly
 - Child variables navigate from parent's cached Value
 - Path ending in `(_)` is write-only; Get returns error

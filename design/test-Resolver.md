@@ -131,6 +131,8 @@
 | AM6 | Write-only | "w" | Set | OK |
 | AM7 | Invalid access | "x" | SetProperty | ERROR, invalid access value |
 | AM8 | Empty access | "" | behavior | defaults to "rw" |
+| AM9 | Action | "action" | Get | ERROR, action variable |
+| AM10 | Action | "action" | Set | OK |
 
 ### Access with Path Semantics (Combined)
 | ID | Scenario | Access | Path | Get | Set |
@@ -138,22 +140,29 @@
 | AP1 | rw + field | "rw" | "Field" | OK | OK |
 | AP2 | r + field | "r" | "Field" | OK | ERROR (access) |
 | AP3 | w + field | "w" | "Field" | ERROR (access) | OK |
-| AP4 | rw + getter | "rw" | "Value()" | OK | ERROR (path) |
+| AP4 | rw + getter | "rw" | "Value()" | N/A - CreateVariable fails | N/A |
 | AP5 | r + getter | "r" | "Value()" | OK | ERROR (access) |
-| AP6 | w + getter | "w" | "Value()" | ERROR (access) | OK (side effect) |
-| AP7 | rw + setter | "rw" | "SetX(_)" | ERROR (path) | OK |
-| AP8 | r + setter | "r" | "SetX(_)" | ERROR (path) | ERROR (access) |
+| AP6 | w + getter | "w" | "Value()" | N/A - CreateVariable fails | N/A |
+| AP7 | rw + setter | "rw" | "SetX(_)" | N/A - CreateVariable fails | N/A |
+| AP8 | r + setter | "r" | "SetX(_)" | N/A - CreateVariable fails | N/A |
 | AP9 | w + setter | "w" | "SetX(_)" | ERROR (access+path) | OK |
+| AP10 | action + field | "action" | "Field" | ERROR (access) | OK |
+| AP11 | action + getter | "action" | "Value()" | ERROR (access) | OK (side effect) |
+| AP12 | action + setter | "action" | "SetX(_)" | ERROR (access) | OK |
 
-Note: For write-only variables (`access: "w"`), a `()` path allows Set to call the method for side effects (ignoring return value). The path-based Set restriction only applies to readable variables.
+Note: Path restrictions are now validated at CreateVariable time. Combinations marked "N/A - CreateVariable fails" will return an error before the variable is created. Only `action` access allows both `()` and `(_)` path endings.
 
-### Write-Only Method Side Effects
+### Write-Only and Action Method Side Effects
 | ID | Scenario | Access | Path | Set Behavior |
 |----|----------|--------|------|--------------|
-| SE1 | Trigger side effect | "w" | "Trigger()" | Calls Trigger(), side effect occurs |
-| SE2 | Counter increment | "w" | "Increment()" | Calls Increment(), counter updated |
-| SE3 | Void method | "w" | "DoSomething()" | Calls method, no error |
-| SE4 | Method with return | "w" | "Process()" | Calls method, return value ignored |
+| SE1 | Write-only with setter | "w" | "SetValue(_)" | Calls SetValue(arg) |
+| SE2 | Write-only with field | "w" | "Field" | Sets field value |
+| SE3 | Trigger side effect (action) | "action" | "Trigger()" | Calls Trigger(), side effect occurs |
+| SE4 | Action with arg | "action" | "AddItem(_)" | Calls AddItem(arg) |
+| SE5 | Action void method | "action" | "DoAction()" | Calls method, no error |
+| SE6 | Action method with return | "action" | "Process()" | Calls method, return value ignored |
+
+Note: Write-only (`w`) access can no longer use `()` paths - use `action` access for zero-arg method triggers.
 
 ### Access and Change Detection
 | ID | Scenario | Access | Expected in DetectChanges |
@@ -162,6 +171,34 @@ Note: For write-only variables (`access: "w"`), a `()` path allows Set to call t
 | AD2 | Read-only variable | "r" | Yes, scanned |
 | AD3 | Write-only variable | "w" | No, skipped |
 | AD4 | Write-only parent, rw child | parent "w", child "rw" | Child scanned, parent not |
+| AD5 | Action variable | "action" | No, skipped |
+| AD6 | Action parent, rw child | parent "action", child "rw" | Child scanned, parent not |
+
+### Action vs Write-Only Creation Behavior
+| ID | Scenario | Access | Expected at CreateVariable |
+|----|----------|--------|----------------------------|
+| AC1 | Write-only initial value | "w" | Initial value IS computed |
+| AC2 | Action no initial value | "action" | Initial value NOT computed |
+| AC3 | Write-only ValueJSON set | "w" | ValueJSON IS set |
+| AC4 | Action ValueJSON nil | "action" | ValueJSON is nil |
+| AC5 | Action avoids method call | "action", path: "Trigger()" | Method NOT called at creation |
+| AC6 | Write-only with field path | "w", path: "Field" | Get() called at creation |
+
+### Path Restriction Validation at CreateVariable
+| ID | Scenario | Access | Path | Expected |
+|----|----------|--------|------|----------|
+| PR1 | rw rejects () path | "rw" | "Value()" | ERROR: use action for zero-arg methods |
+| PR2 | rw rejects (_) path | "rw" | "SetValue(_)" | ERROR: cannot read from setter |
+| PR3 | r allows () path | "r" | "Value()" | OK |
+| PR4 | r rejects (_) path | "r" | "SetValue(_)" | ERROR: cannot read from setter |
+| PR5 | w rejects () path | "w" | "Value()" | ERROR: use action for zero-arg methods |
+| PR6 | w allows (_) path | "w" | "SetValue(_)" | OK |
+| PR7 | action allows () path | "action" | "Trigger()" | OK |
+| PR8 | action allows (_) path | "action" | "AddItem(_)" | OK |
+| PR9 | default (rw) rejects () | (none) | "Value()" | ERROR |
+| PR10 | default (rw) rejects (_) | (none) | "SetX(_)" | ERROR |
+| PR11 | nested path ending in () | "rw" | "Obj.Value()" | ERROR |
+| PR12 | nested path ending in (_) | "r" | "Obj.SetX(_)" | ERROR |
 
 ## Path Element Type Tests
 

@@ -182,8 +182,13 @@ Method requirements for CallWith:
 
 **Access property errors (Variable Get/Set):**
 - Get on variable with `access: "w"` → error (write-only variable)
+- Get on variable with `access: "action"` → error (action variable)
 - Set on variable with `access: "r"` → error (read-only variable)
-- Invalid `access` value (not `r`, `w`, or `rw`) → error
+- Invalid `access` value (not `r`, `w`, `rw`, or `action`) → error
+
+**Access/path combination errors (CreateVariable):**
+- `access: "r"` or `access: "rw"` with path ending in `(_)` → error (cannot read from setter)
+- `access: "w"` or `access: "rw"` with path ending in `()` → error (use `action` for zero-arg methods)
 
 ## Custom Resolvers
 
@@ -246,45 +251,61 @@ val, _ := child.Get()
 
 Variables support an `access` property that controls read/write permissions:
 
-| Value | Name | Get | Set | Scanned for Changes |
-|-------|------|-----|-----|---------------------|
-| `rw`  | Read-Write (default) | ✓ | ✓ | ✓ |
-| `r`   | Read-Only | ✓ | Error | ✓ |
-| `w`   | Write-Only | Error | ✓ | ✗ |
+| Value    | Name | Get | Set | Scanned for Changes | Initial Value Computed |
+|----------|------|-----|-----|---------------------|------------------------|
+| `rw`     | Read-Write (default) | ✓ | ✓ | ✓ | ✓ |
+| `r`      | Read-Only | ✓ | Error | ✓ | ✓ |
+| `w`      | Write-Only | Error | ✓ | ✗ | ✓ |
+| `action` | Action | Error | ✓ | ✗ | ✗ |
 
 **Usage:**
 ```go
 // Read-only variable - scanned for changes, but Set is an error
-readOnly := tracker.CreateVariable(nil, root.ID, map[string]string{
-    "path":   "Status",
-    "access": "r",
-})
+readOnly := tracker.CreateVariable(nil, root.ID, "Status?access=r", nil)
 val, _ := readOnly.Get()    // OK
 readOnly.Set("new")         // ERROR: variable is read-only
 
 // Write-only variable - Set works, but Get fails and not scanned
-writeOnly := tracker.CreateVariable(nil, root.ID, map[string]string{
-    "path":   "Password",
-    "access": "w",
-})
+writeOnly := tracker.CreateVariable(nil, root.ID, "Password?access=w", nil)
 writeOnly.Set("secret")     // OK
 val, _ := writeOnly.Get()   // ERROR: variable is write-only
 
+// Action variable - for methods that trigger side effects
+// Initial value is NOT computed during creation (avoids premature invocation)
+action := tracker.CreateVariable(nil, root.ID, "AddContact(_)?access=action", nil)
+action.Set(newContact)      // calls AddContact(newContact)
+val, _ := action.Get()      // ERROR: variable is action
+
 // Default (read-write) - explicit or omitted
-readWrite := tracker.CreateVariable(nil, root.ID, map[string]string{
-    "path":   "Name",
-    "access": "rw",  // or omit entirely
-})
+readWrite := tracker.CreateVariable(nil, root.ID, "Name?access=rw", nil)
 ```
 
-**Independence from Path Semantics:**
+**Action vs Write-Only:**
 
-The `access` property is independent of path-based behavior. For example, a path ending in `()` (zero-arg method) can still have `access: "w"` if calling that method produces side effects without needing to read its return value.
+Both `action` and `w` (write-only) prevent reading the variable's value and exclude it from change detection. The key differences:
+
+- **Write-Only (`w`)**: The initial value is computed during creation. Appropriate for settable fields like `Password` where you want to set values but not read them back. Paths must NOT end with zero-arg methods `()` - use `action` access for those. Paths MAY end with one-arg methods `(_)`.
+
+- **Action (`action`)**: The initial value is **not** computed during creation. Designed for action-triggering methods where navigating the path would invoke the action prematurely. Paths may end with zero-arg `()` or one-arg `(_)` methods. The method is only invoked when `Set()` is explicitly called.
+
+**Path Restrictions by Access Mode:**
+
+| Access | Valid Path Endings | Invalid Path Endings |
+|--------|-------------------|---------------------|
+| `rw`   | fields, indices | `()`, `(_)` |
+| `r`    | fields, indices, `()` | `(_)` |
+| `w`    | fields, indices, `(_)` | `()` |
+| `action` | `()`, `(_)` | (none) |
+
+- `rw` is a union of `r` and `w`, so it inherits restrictions from both: no `()` (from `w`) and no `(_)` (from `r`)
+- Paths ending in `(_)` require `access: "w"` or `access: "action"`
+- Paths ending in `()` require `access: "r"` or `access: "action"`
+- The difference between `w` and `action` for `(_)` paths: `w` computes the initial value (navigates to the method's receiver), while `action` skips this
 
 **Change Detection:**
 
 - Variables with `access: "r"` or `access: "rw"` are included in change detection scans
-- Variables with `access: "w"` are excluded from scans (their values cannot be read)
+- Variables with `access: "w"` or `access: "action"` are excluded from scans (their values cannot be read)
 
 ## Path Resolution Patterns
 

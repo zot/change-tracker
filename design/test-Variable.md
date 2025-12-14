@@ -85,6 +85,12 @@
 | V8.15 | IsWritable for w | access: "w" | IsWritable() == true |
 | V8.16 | IsWritable for r | access: "r" | IsWritable() == false |
 | V8.17 | Access via query string | path: "Field?access=r" | GetAccess() == "r" |
+| V8.18 | Set action access | SetProperty("access", "action") | GetAccess() == "action" |
+| V8.19 | Action Get fails | access: "action", Get() | error: not readable |
+| V8.20 | Action Set succeeds | access: "action", Set(v) | method invoked |
+| V8.21 | IsReadable for action | access: "action" | IsReadable() == false |
+| V8.22 | IsWritable for action | access: "action" | IsWritable() == true |
+| V8.23 | Action via query string | path: "AddItem(_)?access=action" | GetAccess() == "action" |
 
 ### Access and Change Detection
 | ID | Scenario | Input | Expected Output |
@@ -94,16 +100,51 @@
 | V9.3 | Read-write scanned | access: "rw", value changes | appears in DetectChanges |
 | V9.4 | Write-only children scanned | parent access: "w", child access: "rw" | child in DetectChanges |
 | V9.5 | Access + Active combo | access: "r", Active: false | NOT in DetectChanges |
+| V9.6 | Action not scanned | access: "action", value changes | NOT in DetectChanges |
+| V9.7 | Action children scanned | parent access: "action", child access: "rw" | child in DetectChanges |
 
-### Access vs Path Semantics
+### Access vs Path Semantics (Valid Combinations Only)
 | ID | Scenario | Input | Expected Output |
 |----|----------|-------|-----------------|
 | V10.1 | Access r + path () | access: "r", path: "Value()" | Get: OK, Set: error (access) |
-| V10.2 | Access w + path () | access: "w", path: "Value()" | Get: error (access), Set: OK (calls method) |
-| V10.3 | Access r + path (_) | access: "r", path: "SetX(_)" | Get: error (path), Set: error (access) |
-| V10.4 | Access w + path (_) | access: "w", path: "SetX(_)" | Get: error (both), Set: OK |
-| V10.5 | Access rw + path () | access: "rw", path: "Value()" | Get: OK, Set: error (path restricts for readable vars) |
-| V10.6 | Write-only method side effect | access: "w", path: "Trigger()" | Set: calls Trigger(), side effect occurs |
+| V10.2 | Access w + path (_) | access: "w", path: "SetX(_)" | Get: error (access+path), Set: OK |
+| V10.3 | Access w + field | access: "w", path: "Field" | Get: error (access), Set: OK |
+| V10.4 | Access action + path (_) | access: "action", path: "AddItem(_)" | Get: error (access), Set: OK |
+| V10.5 | Access action + path () | access: "action", path: "DoAction()" | Get: error (access), Set: OK (calls method) |
+| V10.6 | Action method side effect | access: "action", path: "Trigger()" | Set: calls Trigger(), side effect occurs |
+
+Note: Invalid access/path combinations (e.g., `rw` with `()` or `(_)`, `r` with `(_)`, `w` with `()`) are rejected at CreateVariable time. See "Path Restriction Validation at CreateVariable" section for those tests.
+
+### Action vs Write-Only Creation Behavior
+| ID | Scenario | Input | Expected Output |
+|----|----------|-------|-----------------|
+| V11.1 | Write-only computes initial value | access: "w", path: "Field" | Value cached during CreateVariable |
+| V11.2 | Action skips initial value | access: "action", path: "AddItem(_)" | NO Get() during CreateVariable |
+| V11.3 | Action avoids premature invocation | access: "action", path: "Trigger()" | Method NOT called during CreateVariable |
+| V11.4 | Write-only navigates path | access: "w", path: "Nested.Field" | Path navigated during CreateVariable |
+| V11.5 | Action skips path navigation | access: "action", path: "Nested.Action(_)" | Path NOT navigated during CreateVariable |
+| V11.6 | Action ValueJSON is nil | access: "action" | ValueJSON is nil after CreateVariable |
+| V11.7 | Write-only ValueJSON is set | access: "w" | ValueJSON is set after CreateVariable |
+
+### Path Restriction Validation at CreateVariable
+| ID | Scenario | Input | Expected Output |
+|----|----------|-------|-----------------|
+| V12.1 | rw + field path OK | access: "rw", path: "Field" | Variable created successfully |
+| V12.2 | rw + () path fails | access: "rw", path: "Value()" | error: use action for zero-arg methods |
+| V12.3 | rw + (_) path fails | access: "rw", path: "SetValue(_)" | error: cannot read from setter |
+| V12.4 | r + field path OK | access: "r", path: "Field" | Variable created successfully |
+| V12.5 | r + () path OK | access: "r", path: "Value()" | Variable created successfully |
+| V12.6 | r + (_) path fails | access: "r", path: "SetValue(_)" | error: cannot read from setter |
+| V12.7 | w + field path OK | access: "w", path: "Field" | Variable created successfully |
+| V12.8 | w + (_) path OK | access: "w", path: "SetValue(_)" | Variable created successfully |
+| V12.9 | w + () path fails | access: "w", path: "Value()" | error: use action for zero-arg methods |
+| V12.10 | action + () path OK | access: "action", path: "Trigger()" | Variable created successfully |
+| V12.11 | action + (_) path OK | access: "action", path: "AddItem(_)" | Variable created successfully |
+| V12.12 | action + field path OK | access: "action", path: "Field" | Variable created successfully |
+| V12.13 | rw default + () fails | path: "Value()" (no access prop) | error: use action for zero-arg methods |
+| V12.14 | rw default + (_) fails | path: "SetValue(_)" (no access prop) | error: cannot read from setter |
+| V12.15 | Nested path ending in () | access: "rw", path: "Obj.Value()" | error: use action for zero-arg methods |
+| V12.16 | Nested path ending in (_) | access: "r", path: "Obj.SetX(_)" | error: cannot read from setter |
 
 ### ChildIDs
 | ID | Scenario | Input | Expected Output |

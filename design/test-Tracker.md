@@ -31,6 +31,16 @@
 | T2.17 | Root added to rootIDs | (value, 0, "", nil) | rootIDs contains v.ID |
 | T2.18 | Child not in rootIDs | (nil, parentID, "path", nil) | rootIDs does not contain v.ID |
 | T2.19 | Child added to parent ChildIDs | (nil, parentID, "path", nil) | parent.ChildIDs contains v.ID |
+| T2.20 | rw rejects () path | (nil, parentID, "Value()?access=rw", nil) | error returned |
+| T2.21 | rw rejects (_) path | (nil, parentID, "SetX(_)?access=rw", nil) | error returned |
+| T2.22 | r allows () path | (nil, parentID, "Value()?access=r", nil) | Variable created |
+| T2.23 | r rejects (_) path | (nil, parentID, "SetX(_)?access=r", nil) | error returned |
+| T2.24 | w allows (_) path | (nil, parentID, "SetX(_)?access=w", nil) | Variable created |
+| T2.25 | w rejects () path | (nil, parentID, "Value()?access=w", nil) | error returned |
+| T2.26 | action allows () path | (nil, parentID, "Trigger()?access=action", nil) | Variable created |
+| T2.27 | action allows (_) path | (nil, parentID, "AddItem(_)?access=action", nil) | Variable created |
+| T2.28 | default (rw) rejects () | (nil, parentID, "Value()", nil) | error returned |
+| T2.29 | default (rw) rejects (_) | (nil, parentID, "SetX(_)", nil) | error returned |
 
 ### GetVariable
 | ID | Scenario | Input | Expected Output |
@@ -95,6 +105,10 @@
 |----|----------|-------|----------------|
 | E1 | Invalid parent ID | CreateVariable with bad parentID | error or nil parent handling |
 | E2 | Path navigation failure | invalid path element | error from Get |
+| E3 | rw access with () path | access: "rw", path: "Value()" | error: use action for zero-arg methods |
+| E4 | rw access with (_) path | access: "rw", path: "SetX(_)" | error: cannot read from setter |
+| E5 | r access with (_) path | access: "r", path: "SetX(_)" | error: cannot read from setter |
+| E6 | w access with () path | access: "w", path: "Value()" | error: use action for zero-arg methods |
 
 ## Integration Tests
 

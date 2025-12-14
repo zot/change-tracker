@@ -62,10 +62,33 @@ The tracker's reflection-based resolver supports:
 
 The `access` property on Variables adds another layer of read/write control that is **independent** of path semantics:
 
-| Access | Variable.Get() | Variable.Set() | Change Detection |
-|--------|----------------|----------------|------------------|
-| `rw` (default) | OK | OK | Scanned |
-| `r` | OK | ERROR | Scanned |
-| `w` | ERROR | OK | Skipped |
+| Access | Variable.Get() | Variable.Set() | Change Detection | Initial Value Computed |
+|--------|----------------|----------------|------------------|------------------------|
+| `rw` (default) | OK | OK | Scanned | Yes |
+| `r` | OK | ERROR | Scanned | Yes |
+| `w` | ERROR | OK | Skipped | Yes |
+| `action` | ERROR | OK | Skipped | No |
+
+The key difference between `w` and `action` is that `action` skips initial value computation during CreateVariable, preventing premature invocation of action-triggering paths like `AddContact(_)`.
 
 Access checks occur at the Variable level before path resolution. Both access and path restrictions must pass for an operation to succeed. See crc-Variable.md for full details and test-Resolver.md for combined scenarios.
+
+### Path Restrictions by Access Mode
+
+CreateVariable validates that the access mode is compatible with the path ending:
+
+| Access   | Valid Path Endings     | Invalid Path Endings |
+|----------|------------------------|---------------------|
+| `rw`     | fields, indices        | `()`, `(_)`         |
+| `r`      | fields, indices, `()`  | `(_)`               |
+| `w`      | fields, indices, `(_)` | `()`                |
+| `action` | `()`, `(_)`            | (none)              |
+
+Key rules:
+- `rw` is a union of `r` and `w`, so it inherits restrictions from both: no `()` (from `w`) and no `(_)` (from `r`)
+- Paths ending in `(_)` require `access: "w"` or `access: "action"` (not `r` or `rw`)
+- Paths ending in `()` require `access: "r"` or `access: "action"` (not `w` or `rw`)
+
+CreateVariable validation errors:
+- `access: "r"` or `access: "rw"` with path ending in `(_)` -> error (cannot read from setter)
+- `access: "w"` or `access: "rw"` with path ending in `()` -> error (use `action` for zero-arg methods)

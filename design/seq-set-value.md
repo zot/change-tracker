@@ -88,7 +88,7 @@ Client              Variable            Tracker             Resolver
   |                    |                        nil/error   |
   |                    |<-----------------------------------|
   |                    |                    |                   |
-  |                    |    [else if Access == "w" AND lastElem ends with "()"]  |
+  |                    |    [else if (Access == "w" or "action") AND lastElem ends with "()"]
   |                    |                    | Call(val,         |
   |                    |                    |   methodName)     |
   |                    |                    | (side effect)     |
@@ -113,7 +113,7 @@ Client              Variable            Tracker             Resolver
 - Access check is first: `access: "r"` (read-only) returns error immediately
 - Cannot set root variables directly (they hold external values)
 - Path ending in `()` is read-only for readable variables (access "r" or "rw"); Set returns error
-- For write-only variables (`access: "w"`), path ending in `()` allows Set to call the method for side effects
+- For write-only or action variables (`access: "w"` or `access: "action"`), path ending in `()` allows Set to call the method for side effects
 - Path with `(_)` not at end returns error (setter must be terminal)
 - Navigates to parent of target using all but last path element
 - Path elements ending in `()` use Call for navigation

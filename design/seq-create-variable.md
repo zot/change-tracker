@@ -46,6 +46,12 @@ Client              Tracker             Variable            Parent          Regi
   |                    |                    |       |           |               |
   |                    |                    |<------'           |               |
   |                    |                    |                   |               |
+  |                    |    [validate access/path combination]  |               |
+  |                    |    [if Access in (r,rw) and path ends in (_)]          |
+  |                    |    return error: cannot read from setter               |
+  |                    |    [if Access in (w,rw) and path ends in ()]           |
+  |                    |    return error: use action for zero-arg methods       |
+  |                    |                    |                   |               |
   |                    |    [if has "priority" property]        |               |
   |                    |                    | ValuePriority =   |               |
   |                    |                    | parsePriority()   |               |
@@ -67,9 +73,14 @@ Client              Tracker             Variable            Parent          Regi
   |                    |--------.           |                   |               |
   |                    |<-------' parent    |                   |               |
   |                    |                    |                   |               |
+  |                    |    [if Access != "action"]             |               |
   |                    |                    | Get() via path    |               |
   |                    |                    |-------.           |               |
   |                    |                    |<------' computed  |               |
+  |                    |                    |                   |               |
+  |                    |    [if Access == "action"]             |               |
+  |                    |    skip initial value computation      |               |
+  |                    |    (avoid premature action invocation) |               |
   |                    |                    |                   |               |
   |                    |                    |                   | ChildIDs +=   |
   |                    |                    |                   | newVar.ID     |
@@ -82,6 +93,7 @@ Client              Tracker             Variable            Parent          Regi
   |                    |                                                        |
   |                    |<--------------------------------------------------'    |
   |                    |                    |                   |               |
+  |                    |    [if Access != "action"]             |               |
   |                    | ToValueJSON        |                   |               |
   |                    | (Value)            |                   |               |
   |                    |--------.           |                   |               |
@@ -89,6 +101,10 @@ Client              Tracker             Variable            Parent          Regi
   |                    |                    |                   |               |
   |                    |                    | ValueJSON = json  |               |
   |                    |------------------->|                   |               |
+  |                    |                    |                   |               |
+  |                    |    [if Access == "action"]             |               |
+  |                    |    skip ToValueJSON                    |               |
+  |                    |    (no initial value to serialize)     |               |
   |                    |                    |                   |               |
   |                    | store in map       |                   |               |
   |                    |--------.           |                   |               |
@@ -113,3 +129,12 @@ Client              Tracker             Variable            Parent          Regi
 - Objects (pointers/maps) are automatically registered
 - ValueJSON is cached for later change detection
 - If props is nil, an empty map is initialized
+- For "action" access: initial value computation is skipped to avoid premature action invocation
+- For "action" access: ToValueJSON is also skipped since there is no initial value
+
+### Access/Path Validation
+CreateVariable validates that the access mode is compatible with the path:
+- `access: "r"` or `access: "rw"` with path ending in `(_)` returns error (cannot read from setter)
+- `access: "w"` or `access: "rw"` with path ending in `()` returns error (use `action` for zero-arg methods)
+- `rw` is a union of `r` and `w`, so it inherits restrictions from both
+- Only `action` access allows both `()` and `(_)` path endings without restriction
