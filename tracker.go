@@ -6,6 +6,7 @@ package changetracker
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
 	"strings"
 	"weak"
@@ -55,6 +56,22 @@ type Resolver interface {
 	// The method must be void (no return values).
 	// Used for setter-style methods at path terminals.
 	CallWith(obj any, methodName string, value any) error
+
+	// CreateValue creates a value for the given variable.
+	// This happens when CreateVariable has a "create" property
+	CreateValue(variable *Variable, typ string, value any) any
+
+	// CreateWrapper creates a wrapper object for the given variable.
+	// The wrapper stands in for the variable's value when child variables navigate paths.
+	// Returns nil if no wrapper is needed.
+	CreateWrapper(variable *Variable) any
+
+	// Get the type for a value
+	GetType(variable *Variable, value any) string
+
+	// ConvertToValueJSON converts a value to its JSON-serializable form.
+	// Custom resolvers override this to handle domain-specific types (e.g., Lua tables).
+	ConvertToValueJSON(tracker *Tracker, value any) any
 }
 
 // ObjectRef represents an object reference in Value JSON form.
@@ -91,10 +108,10 @@ type Change struct {
 	PropertiesChanged []string
 }
 
-// weakEntry holds a weak reference to an object and its variable ID.
+// weakEntry holds a weak reference to an object and its object ID (for ObjectRef serialization).
 type weakEntry struct {
 	ptr   weak.Pointer[any]
-	varID int64
+	objID int64
 }
 
 // propertyChange tracks which properties changed for a variable.
@@ -114,7 +131,7 @@ type Tracker struct {
 
 	// Change tracking
 	valueChanges    map[int64]bool            // variables with value changes
-	propertyChanges map[int64]*propertyChange // variables with property changes
+	PropertyChanges map[int64]*propertyChange // variables with property changes
 
 	// Sorted changes (reused slice)
 	sortedChanges []Change
@@ -133,7 +150,7 @@ func NewTracker() *Tracker {
 		nextID:          1,
 		rootIDs:         make(map[int64]bool),
 		valueChanges:    make(map[int64]bool),
-		propertyChanges: make(map[int64]*propertyChange),
+		PropertyChanges: make(map[int64]*propertyChange),
 		sortedChanges:   make([]Change, 0, 16),
 		ptrToEntry:      make(map[uintptr]weakEntry),
 		idToPtr:         make(map[int64]uintptr),
@@ -148,17 +165,26 @@ func NewTracker() *Tracker {
 type Variable struct {
 	ID                 int64
 	ParentID           int64
-	ChildIDs           []int64  // IDs of child variables (maintained automatically)
-	Active             bool     // whether this variable and its children are checked for changes
-	Access             string   // access mode: "r" (read-only), "w" (write-only), "rw" (read-write, default)
+	ChildIDs           []int64 // IDs of child variables (maintained automatically)
+	Active             bool    // whether this variable and its children are checked for changes
+	Access             string  // access mode: "r" (read-only), "w" (write-only), "rw" (read-write, default)
 	Properties         map[string]string
 	PropertyPriorities map[string]Priority
 	Path               []any    // parsed path elements
 	Value              any      // cached value for child navigation
 	ValueJSON          any      // cached Value JSON for change detection
 	ValuePriority      Priority // priority of the value
+	WrapperValue       any      // wrapper object for child navigation (optional)
+	WrapperJSON        any      // serialized WrapperValue
 
 	tracker *Tracker
+}
+
+func (t *Tracker) ChangeAll(varID int64) {
+	t.valueChanges[varID] = true
+	for prop := range t.variables[varID].Properties {
+		t.RecordPropertyChange(varID, prop)
+	}
 }
 
 // CreateVariable creates a new variable in the tracker.
@@ -182,9 +208,7 @@ func (t *Tracker) CreateVariable(value any, parentID int64, path string, propert
 	t.nextID++
 
 	// Copy properties from the properties map
-	for k, val := range properties {
-		v.Properties[k] = val
-	}
+	maps.Copy(v.Properties, properties)
 
 	// Parse path with optional query parameters
 	pathPart, queryProps := parsePathWithQuery(path)
@@ -195,9 +219,7 @@ func (t *Tracker) CreateVariable(value any, parentID int64, path string, propert
 	}
 
 	// Query properties override properties map
-	for k, val := range queryProps {
-		v.Properties[k] = val
-	}
+	maps.Copy(v.Properties, queryProps)
 
 	// Store path in properties and parse it
 	if pathPart != "" {
@@ -221,6 +243,12 @@ func (t *Tracker) CreateVariable(value any, parentID int64, path string, propert
 		}
 		v.Access = accessStr
 	}
+
+	hadType := v.Properties["type"] != ""
+
+	//for prop := range v.Properties {
+	//	t.RecordPropertyChange(v.ID, prop)
+	//}
 
 	// Validate access/path combination
 	if err := validateAccessPath(v.GetAccess(), v.Path); err != nil {
@@ -246,19 +274,31 @@ func (t *Tracker) CreateVariable(value any, parentID int64, path string, propert
 		// Action variables are not scanned for changes anyway
 		if !v.IsAction() {
 			// Compute value from parent via path
-			// Use getValue() to bypass access checks (value is cached for child navigation)
-			v.Value, _ = v.getValue()
+			// Use GetValue() to bypass access checks (value is cached for child navigation)
+			v.Value, _ = v.GetValue()
 		}
 	}
 
-	// Register object if pointer or map (skip for action as there's no initial value)
-	if !v.IsAction() {
-		t.registerIfNeeded(v.Value, v.ID)
+	// If there is a create property, create the value
+	if typ, ok := properties["create"]; ok {
+		if val := t.Resolver.CreateValue(v, typ, value); val != nil {
+			v.SetProperty("type", typ)
+			v.Value = val
+		}
 	}
 
 	// Cache Value JSON for change detection (skip for non-readable: w and action)
+	// ToValueJSON will auto-register any pointer/map values
 	if v.IsReadable() {
 		v.ValueJSON = t.ToValueJSON(v.Value)
+	}
+
+	// Update wrapper after ValueJSON is set
+	v.updateWrapper()
+	v.SetType()
+
+	if v.Properties["type"] != "" && !hadType {
+		t.RecordPropertyChange(v.ID, "type")
 	}
 
 	t.variables[v.ID] = v
@@ -285,8 +325,7 @@ func parsePathWithQuery(path string) (string, map[string]string) {
 		return pathPart, props
 	}
 
-	pairs := strings.Split(queryPart, "&")
-	for _, pair := range pairs {
+	for pair := range strings.SplitSeq(queryPart, "&") {
 		if pair == "" {
 			continue
 		}
@@ -405,18 +444,6 @@ func parseInt(s string) (int, error) {
 	return n, nil
 }
 
-// registerIfNeeded registers an object in the registry if it's a pointer or map.
-func (t *Tracker) registerIfNeeded(value any, varID int64) {
-	if value == nil {
-		return
-	}
-	rv := reflect.ValueOf(value)
-	kind := rv.Kind()
-	if kind == reflect.Ptr || kind == reflect.Map {
-		t.RegisterObject(value, varID)
-	}
-}
-
 // GetVariable retrieves a variable by ID.
 // CRC: crc-Tracker.md
 func (t *Tracker) GetVariable(id int64) *Variable {
@@ -447,6 +474,11 @@ func (t *Tracker) DestroyVariable(id int64) {
 		}
 	}
 
+	// Unregister wrapper if it was registered
+	if v.WrapperValue != nil {
+		t.UnregisterObject(v.WrapperValue)
+	}
+
 	// Unregister object if it was registered
 	if v.Value != nil {
 		t.UnregisterObject(v.Value)
@@ -454,7 +486,7 @@ func (t *Tracker) DestroyVariable(id int64) {
 
 	// Remove from change tracking
 	delete(t.valueChanges, id)
-	delete(t.propertyChanges, id)
+	delete(t.PropertyChanges, id)
 
 	// Remove from variables
 	delete(t.variables, id)
@@ -464,69 +496,76 @@ func (t *Tracker) DestroyVariable(id int64) {
 // sorts changes by priority, clears internal change records, and returns the sorted changes.
 // CRC: crc-Tracker.md
 // Sequence: seq-detect-changes.md
-func (t *Tracker) DetectChanges() []Change {
+func (t *Tracker) DetectChanges() bool {
 	// Perform depth-first traversal starting from root variables
+	changed := false
 	for rootID := range t.rootIDs {
-		t.checkVariable(rootID)
+		changed = t.checkVariable(rootID) || changed
 	}
+	return changed
+}
 
+func (t *Tracker) GetChanges() []Change {
 	// Sort changes by priority
 	result := t.sortChanges()
-
 	// Clear internal change records (but preserve the sorted changes slice)
 	t.valueChanges = make(map[int64]bool)
-	t.propertyChanges = make(map[int64]*propertyChange)
-
+	t.PropertyChanges = make(map[int64]*propertyChange)
 	return result
 }
 
 // checkVariable recursively checks a variable and its children for changes.
 // If the variable is inactive, it and all its descendants are skipped.
 // If the variable is non-readable (write-only or action), it is skipped but children are still checked.
-func (t *Tracker) checkVariable(id int64) {
+func (t *Tracker) checkVariable(id int64) bool {
 	v := t.variables[id]
 	if v == nil {
-		return
+		return false
 	}
 
 	// If inactive, skip this variable and all its descendants
 	if !v.Active {
-		return
+		return false
 	}
+
+	changed := false
 
 	// If non-readable (write-only or action), skip this variable but continue to children
 	// (non-readable variables cannot be read, so we can't detect their value changes)
 	if !v.IsReadable() {
 		// Recursively check children even though this variable is non-readable
 		for _, childID := range v.ChildIDs {
-			t.checkVariable(childID)
+			changed = t.checkVariable(childID) || changed
 		}
-		return
+		return changed
 	}
 
-	// Get current value (use getValue to bypass access checks - we've already verified readable above)
-	currentValue, err := v.getValue()
+	// Get current value (use GetValue to bypass access checks - we've already verified readable above)
+	currentValue, err := v.GetValue()
 	if err == nil {
 		// Convert to Value JSON
 		currentJSON := t.ToValueJSON(currentValue)
 
 		// Compare with cached ValueJSON
 		if !jsonEqual(v.ValueJSON, currentJSON) {
+			changed = true
 			t.valueChanges[v.ID] = true
+
+			// Update cached values
+			v.Value = currentValue
+			v.ValueJSON = currentJSON
+
+			// Update wrapper after ValueJSON is updated
+			v.updateWrapper()
+			v.SetType()
 		}
-
-		// Update cached values
-		v.Value = currentValue
-		v.ValueJSON = currentJSON
-
-		// Re-register if value changed to a new pointer/map
-		t.registerIfNeeded(currentValue, v.ID)
 	}
 
 	// Recursively check all children
 	for _, childID := range v.ChildIDs {
-		t.checkVariable(childID)
+		changed = t.checkVariable(childID) || changed
 	}
+	return changed
 }
 
 // jsonEqual compares two Value JSON values for equality.
@@ -558,7 +597,7 @@ func (t *Tracker) sortChanges() []Change {
 	for id := range t.valueChanges {
 		changedIDs[id] = true
 	}
-	for id := range t.propertyChanges {
+	for id := range t.PropertyChanges {
 		changedIDs[id] = true
 	}
 
@@ -570,7 +609,7 @@ func (t *Tracker) sortChanges() []Change {
 		}
 
 		valueChanged := t.valueChanges[id]
-		propChange := t.propertyChanges[id]
+		propChange := t.PropertyChanges[id]
 
 		// Group properties by priority
 		highProps := make([]string, 0)
@@ -678,14 +717,14 @@ func (t *Tracker) sortChanges() []Change {
 	return t.sortedChanges
 }
 
-// recordPropertyChange records that a property changed for a variable.
+// RecordPropertyChange records that a property changed for a variable.
 // CRC: crc-Tracker.md
 // Sequence: seq-set-property.md
-func (t *Tracker) recordPropertyChange(varID int64, propName string) {
-	pc := t.propertyChanges[varID]
+func (t *Tracker) RecordPropertyChange(varID int64, propName string) {
+	pc := t.PropertyChanges[varID]
 	if pc == nil {
 		pc = &propertyChange{properties: make(map[string]bool)}
-		t.propertyChanges[varID] = pc
+		t.PropertyChanges[varID] = pc
 	}
 	pc.properties[propName] = true
 }
@@ -728,65 +767,67 @@ func (t *Tracker) Children(parentID int64) []*Variable {
 	return result
 }
 
-// RegisterObject manually registers an object with a variable ID.
+// RegisterObject registers an object and returns its ID.
+// Returns (id, true) if registered or already registered, (0, false) if not registerable.
 // CRC: crc-Tracker.md, crc-ObjectRegistry.md
-// Sequence: seq-create-variable.md
-func (t *Tracker) RegisterObject(obj any, varID int64) bool {
-	if obj == nil {
-		return false
+// Sequence: seq-to-value-json.md
+func (t *Tracker) RegisterObject(obj any) (int64, bool) {
+	if obj == nil || !canRegisterObj(obj) {
+		return 0, false
 	}
 	rv := reflect.ValueOf(obj)
-	kind := rv.Kind()
-	if kind != reflect.Ptr && kind != reflect.Map {
-		return false
-	}
-
 	ptr := rv.Pointer()
 
-	// Create weak reference
+	// Check if already registered
+	if existing, ok := t.ptrToEntry[ptr]; ok {
+		return existing.objID, true
+	}
+
+	// Allocate new ID and register
+	objID := t.nextID
+	t.nextID++
+
 	entry := weakEntry{
 		ptr:   weak.Make(&obj),
-		varID: varID,
+		objID: objID,
 	}
 
 	t.ptrToEntry[ptr] = entry
-	t.idToPtr[varID] = ptr
-	return true
+	t.idToPtr[objID] = ptr
+	return objID, true
+}
+
+func canRegisterObj(obj any) bool {
+	kind := reflect.ValueOf(obj).Kind()
+	return kind == reflect.Pointer || kind == reflect.UnsafePointer || kind == reflect.Map
 }
 
 // UnregisterObject removes an object from the registry.
 // CRC: crc-Tracker.md, crc-ObjectRegistry.md
 func (t *Tracker) UnregisterObject(obj any) {
-	if obj == nil {
+	if obj == nil || !canRegisterObj(obj) {
 		return
 	}
 	rv := reflect.ValueOf(obj)
-	kind := rv.Kind()
-	if kind != reflect.Ptr && kind != reflect.Map {
-		return
-	}
-
 	ptr := rv.Pointer()
 	if entry, ok := t.ptrToEntry[ptr]; ok {
-		delete(t.idToPtr, entry.varID)
+		delete(t.idToPtr, entry.objID)
 		delete(t.ptrToEntry, ptr)
 	}
 }
 
-// LookupObject finds the variable ID for a registered object.
+// LookupObject finds the object ID for a registered object.
 // CRC: crc-Tracker.md, crc-ObjectRegistry.md
 // Sequence: seq-to-value-json.md
 func (t *Tracker) LookupObject(obj any) (int64, bool) {
 	if obj == nil {
 		return 0, false
 	}
-	rv := reflect.ValueOf(obj)
-	kind := rv.Kind()
-	if kind != reflect.Ptr && kind != reflect.Map {
+	if !canRegisterObj(obj) {
 		return 0, false
 	}
 
-	ptr := rv.Pointer()
+	ptr := reflect.ValueOf(obj).Pointer()
 	entry, ok := t.ptrToEntry[ptr]
 	if !ok {
 		return 0, false
@@ -795,18 +836,18 @@ func (t *Tracker) LookupObject(obj any) (int64, bool) {
 	// Check if object is still alive
 	if entry.ptr.Value() == nil {
 		// Object was collected, clean up
-		delete(t.idToPtr, entry.varID)
+		delete(t.idToPtr, entry.objID)
 		delete(t.ptrToEntry, ptr)
 		return 0, false
 	}
 
-	return entry.varID, true
+	return entry.objID, true
 }
 
-// GetObject retrieves an object by its variable ID.
+// GetObject retrieves an object by its object ID.
 // CRC: crc-Tracker.md, crc-ObjectRegistry.md
-func (t *Tracker) GetObject(varID int64) any {
-	ptr, ok := t.idToPtr[varID]
+func (t *Tracker) GetObject(objID int64) any {
+	ptr, ok := t.idToPtr[objID]
 	if !ok {
 		return nil
 	}
@@ -819,7 +860,7 @@ func (t *Tracker) GetObject(varID int64) any {
 	obj := entry.ptr.Value()
 	if obj == nil {
 		// Object was collected, clean up
-		delete(t.idToPtr, varID)
+		delete(t.idToPtr, objID)
 		delete(t.ptrToEntry, ptr)
 		return nil
 	}
@@ -829,34 +870,36 @@ func (t *Tracker) GetObject(varID int64) any {
 
 // ToValueJSON serializes a value to Value JSON form.
 // Sequence: seq-to-value-json.md
+// Spec: protocol.md - "Arrays contain only variable values (no nested objects, only references)"
 func (t *Tracker) ToValueJSON(value any) any {
 	if value == nil {
 		return nil
 	}
 
+	// Let resolver convert domain-specific types
+	value = t.Resolver.ConvertToValueJSON(t, value)
+
+	// Try to register (handles pointers, maps)
+	if id, ok := t.RegisterObject(value); ok {
+		return ObjectRef{Obj: id}
+	}
+
+	// Not registerable - check if it's a slice/array and process elements
 	rv := reflect.ValueOf(value)
-
-	// Handle pointers and maps - must be registered
-	switch rv.Kind() {
-	case reflect.Ptr, reflect.Map:
-		if id, ok := t.LookupObject(value); ok {
-			return ObjectRef{Obj: id}
-		}
-		// Unregistered pointer/map - this is an error condition per spec
-		// but we'll return nil to avoid panic
-		return nil
-
-	case reflect.Slice, reflect.Array:
+	if rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array {
 		result := make([]any, rv.Len())
 		for i := 0; i < rv.Len(); i++ {
-			result[i] = t.ToValueJSON(rv.Index(i).Interface())
+			elem := t.ToValueJSON(rv.Index(i).Interface())
+			// ValueJSON arrays cannot contain nested arrays
+			if elemRV := reflect.ValueOf(elem); elemRV.Kind() == reflect.Slice || elemRV.Kind() == reflect.Array {
+				panic(fmt.Sprintf("ToValueJSON: nested arrays not allowed (element %d is %T)", i, elem))
+			}
+			result[i] = elem
 		}
 		return result
-
-	default:
-		// Primitives pass through
-		return value
 	}
+
+	return value
 }
 
 // ToValueJSONBytes serializes a value to Value JSON as a byte slice.
@@ -864,6 +907,37 @@ func (t *Tracker) ToValueJSON(value any) any {
 func (t *Tracker) ToValueJSONBytes(value any) ([]byte, error) {
 	valueJSON := t.ToValueJSON(value)
 	return json.Marshal(valueJSON)
+}
+
+func (t *Tracker) FromValueJSONBytes(value []byte) (any, error) {
+	var result any
+	if err := json.Unmarshal(value, &result); err != nil {
+		return nil, err
+	}
+	if a, ok := result.([]any); ok {
+		res := make([]any, len(a))
+		var err error
+		for i, v := range a {
+			if res[i], err = t.resolveObj(v); err != nil {
+				return nil, err
+			}
+		}
+		return res, nil
+	}
+	return t.resolveObj(result)
+}
+
+func (t *Tracker) resolveObj(value any) (any, error) {
+	if m, ok := value.(map[string]any); ok && len(m) == 1 {
+		if f, ok := m["obj"].(float64); ok {
+			if ptr := t.idToPtr[int64(f)]; ptr != 0 {
+				return t.ptrToEntry[ptr].ptr.Value(), nil
+			} else {
+				return nil, fmt.Errorf("Bad object reference: %d", int64(f))
+			}
+		}
+	}
+	return value, nil
 }
 
 // Get implements the Resolver interface using reflection.
@@ -876,7 +950,7 @@ func (t *Tracker) Get(obj any, pathElement any) (any, error) {
 	rv := reflect.ValueOf(obj)
 
 	// Dereference pointers
-	for rv.Kind() == reflect.Ptr {
+	for rv.Kind() == reflect.Pointer || rv.Kind() == reflect.UnsafePointer {
 		if rv.IsNil() {
 			return nil, fmt.Errorf("cannot navigate nil pointer")
 		}
@@ -885,15 +959,15 @@ func (t *Tracker) Get(obj any, pathElement any) (any, error) {
 
 	switch pe := pathElement.(type) {
 	case string:
-		return t.getByString(rv, pe)
+		return t.GetByString(rv, pe)
 	case int:
-		return t.getByIndex(rv, pe)
+		return t.GetByIndex(rv, pe)
 	default:
 		return nil, fmt.Errorf("unsupported path element type: %T", pathElement)
 	}
 }
 
-func (t *Tracker) getByString(rv reflect.Value, name string) (any, error) {
+func (t *Tracker) GetByString(rv reflect.Value, name string) (any, error) {
 	switch rv.Kind() {
 	case reflect.Struct:
 		field := rv.FieldByName(name)
@@ -921,7 +995,7 @@ func (t *Tracker) getByString(rv reflect.Value, name string) (any, error) {
 	}
 }
 
-func (t *Tracker) getByIndex(rv reflect.Value, index int) (any, error) {
+func (t *Tracker) GetByIndex(rv reflect.Value, index int) (any, error) {
 	switch rv.Kind() {
 	case reflect.Slice, reflect.Array:
 		if index < 0 || index >= rv.Len() {
@@ -944,7 +1018,7 @@ func (t *Tracker) Call(obj any, methodName string) (any, error) {
 	rv := reflect.ValueOf(obj)
 
 	// Dereference pointers
-	for rv.Kind() == reflect.Ptr {
+	for rv.Kind() == reflect.Pointer || rv.Kind() == reflect.UnsafePointer {
 		if rv.IsNil() {
 			return nil, fmt.Errorf("cannot call method on nil pointer")
 		}
@@ -986,7 +1060,7 @@ func (t *Tracker) CallWith(obj any, methodName string, value any) error {
 	rv := reflect.ValueOf(obj)
 
 	// Dereference pointers
-	for rv.Kind() == reflect.Ptr {
+	for rv.Kind() == reflect.Pointer || rv.Kind() == reflect.UnsafePointer {
 		if rv.IsNil() {
 			return fmt.Errorf("cannot call method on nil pointer")
 		}
@@ -1025,6 +1099,30 @@ func (t *Tracker) CallWith(obj any, methodName string, value any) error {
 	return nil
 }
 
+// CreateWrapper implements the Resolver interface.
+// The default implementation returns nil (no wrapper).
+func (t *Tracker) CreateWrapper(variable *Variable) any {
+	return nil
+}
+
+// CreateWrapper implements the Resolver interface.
+// The default implementation returns value (no creation).
+func (t *Tracker) CreateValue(variable *Variable, typ string, value any) any {
+	return value
+}
+
+// GetType implements the Resolver interface.
+// The default implementation returns "" (no type).
+func (t *Tracker) GetType(variable *Variable, value any) string {
+	return ""
+}
+
+// ConvertToValueJSON implements the Resolver interface.
+// The default implementation returns the value unchanged.
+func (t *Tracker) ConvertToValueJSON(tracker *Tracker, value any) any {
+	return value
+}
+
 // Set implements the Resolver interface using reflection.
 // Sequence: seq-set-value.md
 func (t *Tracker) Set(obj any, pathElement any, value any) error {
@@ -1035,7 +1133,7 @@ func (t *Tracker) Set(obj any, pathElement any, value any) error {
 	rv := reflect.ValueOf(obj)
 
 	// For struct fields, we need a pointer
-	if rv.Kind() == reflect.Ptr {
+	if rv.Kind() == reflect.Pointer || rv.Kind() == reflect.UnsafePointer {
 		rv = rv.Elem()
 	}
 
@@ -1120,24 +1218,28 @@ func (v *Variable) Get() (any, error) {
 		return nil, fmt.Errorf("cannot Get on write-only path (ends in setter)")
 	}
 
-	return v.getValue()
+	return v.GetValue()
 }
 
-// getValue is the internal method that navigates to the value without access checks.
+func (v *Variable) GetId() int64 {
+	return v.ID
+}
+
+// GetValue is the internal method that navigates to the value without access checks.
 // Used for caching values during CreateVariable and DetectChanges.
-func (v *Variable) getValue() (any, error) {
+func (v *Variable) GetValue() (any, error) {
 	// Root variable returns cached value
 	if v.ParentID == 0 {
 		return v.Value, nil
 	}
 
-	// Get parent's value (use parent's cached Value directly, not Get which has access checks)
+	// Get parent's value (use parent's NavigationValue which prefers WrapperValue over Value)
 	parent := v.tracker.GetVariable(v.ParentID)
 	if parent == nil {
 		return nil, fmt.Errorf("parent variable %d not found", v.ParentID)
 	}
 
-	current := parent.Value
+	current := parent.NavigationValue()
 
 	// Apply each path element
 	for _, elem := range v.Path {
@@ -1172,6 +1274,9 @@ func (v *Variable) Set(value any) error {
 	if len(v.Path) == 0 {
 		// Root or no-path variable: update Value directly
 		v.Value = value
+		v.ValueJSON = v.tracker.ToValueJSON(value)
+		v.updateWrapper()
+		v.SetType()
 		return nil
 	}
 
@@ -1183,14 +1288,14 @@ func (v *Variable) Set(value any) error {
 		return fmt.Errorf("cannot Set on read-only path (ends in getter)")
 	}
 
-	// Get parent's value
+	// Get parent's value (use NavigationValue which prefers WrapperValue over Value)
 	parent := v.tracker.GetVariable(v.ParentID)
 	if parent == nil {
 		return fmt.Errorf("parent variable %d not found", v.ParentID)
 	}
 
 	// Navigate to the parent of the target
-	current := parent.Value
+	current := parent.NavigationValue()
 	for i := 0; i < len(v.Path)-1; i++ {
 		elem := v.Path[i]
 		var val any
@@ -1222,7 +1327,11 @@ func (v *Variable) Set(value any) error {
 		return err
 	}
 	// Use Set for fields, map keys, indices
-	return v.tracker.Resolver.Set(current, lastElem, value)
+	if err := v.tracker.Resolver.Set(current, lastElem, value); err != nil {
+		return err
+	}
+	v.SetType()
+	return nil
 }
 
 // Parent returns the parent variable, or nil if this is a root variable.
@@ -1238,6 +1347,56 @@ func (v *Variable) Parent() *Variable {
 // CRC: crc-Variable.md
 func (v *Variable) SetActive(active bool) {
 	v.Active = active
+}
+
+// NavigationValue returns the value used for child path navigation.
+// Returns WrapperValue if present, otherwise Value.
+// CRC: crc-Variable.md
+func (v *Variable) NavigationValue() any {
+	if v.WrapperValue != nil {
+		return v.WrapperValue
+	}
+	return v.Value
+}
+
+// updateWrapper handles wrapper creation/destruction when ValueJSON changes.
+// Call this after ValueJSON is set/updated.
+// CreateWrapper may return the same wrapper object (v.WrapperValue) to preserve state.
+func (v *Variable) updateWrapper() {
+	oldWrapper := v.WrapperValue
+	clear := true
+	defer func() {
+		if oldWrapper != nil {
+			v.tracker.UnregisterObject(oldWrapper)
+			if clear {
+				v.WrapperValue = nil
+				v.WrapperJSON = nil
+			}
+		}
+	}()
+
+	// If no wrapper property or ValueJSON is nil, clear wrapper
+	if v.Properties["wrapper"] == "" || v.ValueJSON == nil {
+		return
+	}
+
+	// Create new wrapper (may return same object as oldWrapper to preserve state)
+	newWrapper := v.tracker.Resolver.CreateWrapper(v)
+
+	// If CreateWrapper returns nil, clear wrapper
+	if newWrapper == nil {
+		return
+	}
+
+	// Only update if wrapper pointer changed
+	if newWrapper != oldWrapper {
+		clear = false // preserve these values
+		v.WrapperValue = newWrapper
+		// ToValueJSON auto-registers the wrapper with a unique ID
+		v.WrapperJSON = v.tracker.ToValueJSON(newWrapper)
+	} else {
+		oldWrapper = nil
+	}
 }
 
 // isValidAccess checks if an access string is valid.
@@ -1289,13 +1448,30 @@ func (v *Variable) GetPropertyPriority(name string) Priority {
 	return PriorityMedium
 }
 
+func (v *Variable) SetType() {
+	j := v.WrapperJSON
+	val := v.WrapperValue
+	if j == nil {
+		j = v.ValueJSON
+		val = v.Value
+	}
+	if _, ok := j.(ObjectRef); ok {
+		typ := v.tracker.Resolver.GetType(v, val)
+		if typ != "" && typ != v.Properties["type"] {
+			v.SetProperty("type", typ)
+		}
+	}
+}
+
 // SetProperty sets a property. Empty value removes the property.
 // Sequence: seq-set-property.md
 func (v *Variable) SetProperty(name, value string) {
 	// Parse priority suffix from name
 	baseName, priority := parsePropertyName(name)
 
-	if value == "" {
+	if v.Properties[baseName] == value && v.PropertyPriorities[baseName] == priority {
+		return
+	} else if value == "" {
 		delete(v.Properties, baseName)
 		delete(v.PropertyPriorities, baseName)
 	} else {
@@ -1304,7 +1480,7 @@ func (v *Variable) SetProperty(name, value string) {
 	}
 
 	// Record property change in tracker
-	v.tracker.recordPropertyChange(v.ID, baseName)
+	v.tracker.RecordPropertyChange(v.ID, baseName)
 
 	// Handle special properties
 	switch baseName {
@@ -1333,6 +1509,10 @@ func (v *Variable) SetProperty(name, value string) {
 			panic(fmt.Sprintf("SetProperty: %v", err))
 		}
 		v.Access = newAccess
+	case "wrapper":
+		// Trigger wrapper update when wrapper property changes
+		v.updateWrapper()
+		v.SetType()
 	}
 }
 

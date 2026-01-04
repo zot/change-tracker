@@ -15,13 +15,16 @@
 - Value: any - cached value for child navigation
 - ValueJSON: any - cached Value JSON for change detection
 - ValuePriority: Priority - priority of the value (set via "priority" property)
+- WrapperValue: any - optional wrapper object for child navigation (created via Resolver.CreateWrapper when "wrapper" property is set)
+- WrapperJSON: any - serialized WrapperValue (ToValueJSON)
 - tracker: *Tracker - reference to owning tracker (for resolver access)
 
 ### Does
-- Get(): checks access (error if "w" or "action"), navigates from parent's cached value using path, returns current value
-- Set(value): checks access (error if "r"), navigates to target location and sets value; for write-only or action variables with `()` paths, calls the method for side effects
+- Get(): checks access (error if "w" or "action"), navigates from parent's NavigationValue using path, returns current value
+- Set(value): checks access (error if "r"), navigates from parent's NavigationValue to target location and sets value; for write-only or action variables with `()` paths, calls the method for side effects
 - Parent(): returns parent variable or nil
 - SetActive(active bool): sets whether the variable and its children participate in change detection
+- NavigationValue(): returns WrapperValue if present, otherwise Value (used by child variables for path navigation)
 - GetAccess(): returns access mode ("r", "w", "rw", or "action")
 - IsReadable(): returns true if access allows reading ("r" or "rw")
 - IsWritable(): returns true if access allows writing ("w", "rw", or "action")
@@ -31,6 +34,7 @@
   - Setting "priority" property updates ValuePriority
   - Setting "path" property re-parses and updates Path field
   - Setting "access" property updates Access field (validates: r, w, rw, action)
+  - Setting "wrapper" property triggers wrapper update (creates or destroys wrapper)
   - Records property change in tracker for DetectChanges
 - GetPropertyPriority(name): returns priority for a property (default: PriorityMedium)
 
@@ -85,3 +89,68 @@ CreateVariable validates access/path combinations:
 Validation errors at CreateVariable:
 - `access: "r"` or `access: "rw"` with path ending in `(_)` -> error (cannot read from setter)
 - `access: "w"` or `access: "rw"` with path ending in `()` -> error (use `action` for zero-arg methods)
+
+### Wrapper Support
+
+A variable can have an optional wrapper that stands in for its value when child variables navigate paths. This allows the resolver to provide a different interface to children than the underlying value.
+
+**Wrapper Lifecycle:**
+1. When "wrapper" property is set AND ValueJSON is non-nil:
+   - Resolver.CreateWrapper(variable) is called
+   - If it returns non-nil, the wrapper is registered and stored in WrapperValue
+   - WrapperJSON stores the serialized form of the wrapper
+2. When ValueJSON changes (in DetectChanges or when wrapper property changes):
+   - CreateWrapper(v) is called
+   - If the returned wrapper is the **same pointer** as v.WrapperValue:
+     - No action taken (wrapper preserved with its state)
+   - If the returned wrapper is **different** (including nil):
+     - Old wrapper is unregistered from the object registry
+     - New wrapper is registered (if non-nil)
+     - WrapperValue is updated
+     - WrapperJSON is recomputed
+3. When "wrapper" property is cleared or variable is destroyed:
+   - Wrapper is unregistered and cleared
+
+This design allows `CreateWrapper` to:
+- Return the same wrapper object (modified in place) to preserve persistent state
+- Return a new wrapper when replacement is needed
+- Return nil to remove the wrapper
+
+**Child Navigation:**
+Child variables use NavigationValue() to get the starting point for path resolution:
+- If WrapperValue is non-nil, children navigate from WrapperValue
+- Otherwise, children navigate from Value
+
+**Usage:**
+```go
+// Custom resolver that creates wrappers
+type myResolver struct {
+    *Tracker
+}
+
+func (r *myResolver) CreateWrapper(v *Variable) any {
+    // Return a wrapper object that exposes a different interface
+    return &MyWrapper{original: v.Value}
+}
+
+tr := NewTracker()
+tr.Resolver = &myResolver{tr}
+parent := tr.CreateVariable(myData, 0, "?wrapper=true", nil)
+// Children now navigate through MyWrapper instead of myData
+```
+
+**Preserving Wrapper State:**
+```go
+func (r *myResolver) CreateWrapper(v *Variable) any {
+    // Reuse existing wrapper to preserve state
+    if w, ok := v.WrapperValue.(*StatefulWrapper); ok {
+        w.data = v.Value.(*MyData)  // Update data reference
+        return w                     // Same pointer preserves cache
+    }
+    // Create new wrapper
+    return &StatefulWrapper{
+        cache: make(map[string]any),
+        data:  v.Value.(*MyData),
+    }
+}
+```

@@ -51,12 +51,17 @@ Where `123` is the variable ID associated with the object.
 
 ## Registration Rules
 
-Objects are registered in the object registry when:
+Objects are registered in the object registry automatically via `ToValueJSON()`:
 
-1. **CreateVariable with pointer/map**: `tracker.CreateVariable(val, parentID, props)` automatically registers pointers and maps
-2. **Manual registration**: `tracker.RegisterObject(val, varID)` explicitly registers
+- When `ToValueJSON()` encounters an unregistered pointer or map, it automatically registers it with the next available ID
+- This is the **only** way objects get registered - there is no explicit registration
+- Only pointers and maps can be registered
+- Registration happens when `ValueJSON` or `WrapperJSON` is computed
 
-Only pointers and maps can be registered and serialized. Unregistered pointers/maps cause an error during serialization.
+This automatic registration ensures that:
+- Variable values are registered when their ValueJSON is computed during CreateVariable or DetectChanges
+- Wrapper objects are registered when their WrapperJSON is computed
+- Nested objects in arrays are properly converted to object references
 
 ## Serialization Algorithm
 
@@ -72,8 +77,12 @@ ToValueJSON(value):
         if registered(value):
             return ObjectRef{Obj: lookupID(value)}
         else:
-            error: pointers and maps must be registered
+            id = allocateNextID()
+            register(value, id)
+            return ObjectRef{Obj: id}
 ```
+
+Auto-registration assigns the next available variable ID to unregistered objects. This enables serialization of arrays containing objects that weren't explicitly registered.
 
 ## Examples
 
@@ -89,14 +98,34 @@ tracker := changetracker.NewTracker()
 alice := &Person{Name: "Alice"}
 bob := &Person{Name: "Bob"}
 
-tracker.CreateVariable(alice, 0, nil)  // ID 1
-tracker.CreateVariable(bob, 0, nil)    // ID 2
+tracker.CreateVariable(alice, 0, "", nil)  // ID 1
+tracker.CreateVariable(bob, 0, "", nil)    // ID 2
 
 // ToValueJSON for the array
 people := []*Person{alice, bob, alice}
 
 // Value JSON result:
 // [{"obj": 1}, {"obj": 2}, {"obj": 1}]
+```
+
+### Auto-Registration of Unregistered Objects
+
+```go
+tracker := changetracker.NewTracker()
+
+// Objects not explicitly registered
+alice := &Person{Name: "Alice"}
+bob := &Person{Name: "Bob"}
+
+// ToValueJSON auto-registers them
+people := []*Person{alice, bob}
+json := tracker.ToValueJSON(people)
+
+// Value JSON result (IDs assigned automatically):
+// [{"obj": 1}, {"obj": 2}]
+
+// Objects are now registered and can be looked up
+id, _ := tracker.LookupObject(alice)  // returns 1, true
 ```
 
 ### Nested Arrays
@@ -116,7 +145,7 @@ matrix := [][]*Person{
 
 ```go
 m := map[string]*Person{"alice": alice, "bob": bob}
-tracker.CreateVariable(m, 0, nil)  // ID 3
+tracker.CreateVariable(m, 0, "", nil)  // ID 3
 
 // ToValueJSON(m) returns:
 // {"obj": 3}

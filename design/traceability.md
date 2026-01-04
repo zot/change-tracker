@@ -8,6 +8,7 @@
 | api.md        | crc-Tracker.md, crc-Variable.md, crc-Priority.md, crc-Change.md, crc-Resolver.md, crc-ObjectRef.md, seq-create-variable.md, seq-destroy-variable.md, seq-detect-changes.md, seq-get-value.md, seq-set-value.md, seq-set-property.md, seq-to-value-json.md   |
 | resolver.md   | crc-Resolver.md, crc-Tracker.md (Call, CallWith methods), crc-Variable.md (access property), seq-get-value.md, seq-set-value.md, seq-detect-changes.md (access check)                                                                                                                                                            |
 | value-json.md | crc-ObjectRef.md, crc-ObjectRegistry.md, seq-to-value-json.md                                                                                                                                                                                         |
+| wrapper.md    | crc-Variable.md (WrapperValue, WrapperJSON, NavigationValue), crc-Resolver.md (CreateWrapper), test-Wrapper.md                                                                                                                       |
 
 ## Level 2 to Level 3 (Design to Implementation)
 
@@ -34,10 +35,10 @@ Note: All design elements are implemented in a single file (`tracker.go`) for si
 - [x] tracker.go - ObjectRef struct and helpers (IsObjectRef, GetObjectRefID)
 
 ### ObjectRegistry (crc-ObjectRegistry.md)
-- [x] tracker.go - Weak reference registry (RegisterObject, UnregisterObject, LookupObject, GetObject)
+- [x] tracker.go - Weak reference registry (UnregisterObject, LookupObject, GetObject; registration is internal via ToValueJSON)
 
 ### Sequences
-- [x] seq-create-variable.md -> tracker.go:CreateVariable, RegisterObject
+- [x] seq-create-variable.md -> tracker.go:CreateVariable (registration via ToValueJSON)
 - [x] seq-destroy-variable.md -> tracker.go:DestroyVariable
 - [x] seq-detect-changes.md -> tracker.go:DetectChanges (includes internal sortChanges, checkVariable)
 - [x] seq-get-value.md -> tracker.go:Variable.Get, Tracker.Get, Tracker.Call (updated for path semantics)
@@ -59,6 +60,7 @@ Note: All tests are implemented in a single file (`tracker_test.go`) for simplic
 | test-Resolver.md       | [x] tracker_test.go     |
 | test-ObjectRegistry.md | [x] tracker_test.go     |
 | test-ValueJSON.md      | [x] tracker_test.go     |
+| test-Wrapper.md        | [x] tracker_test.go     |
 
 ## Implementation Traceability
 
@@ -85,7 +87,7 @@ All public functions and methods in tracker.go have traceability comments:
 | Variables                    | crc-Tracker.md                                                                                                            | -                      |
 | RootVariables                | crc-Tracker.md                                                                                                            | -                      |
 | Children                     | crc-Tracker.md                                                                                                            | -                      |
-| RegisterObject               | crc-Tracker.md, crc-ObjectRegistry.md                                                                                     | seq-create-variable.md |
+| register (internal)          | crc-ObjectRegistry.md                                                                                                     | seq-to-value-json.md   |
 | UnregisterObject             | crc-Tracker.md, crc-ObjectRegistry.md                                                                                     | -                      |
 | LookupObject                 | crc-Tracker.md, crc-ObjectRegistry.md                                                                                     | seq-to-value-json.md   |
 | GetObject                    | crc-Tracker.md, crc-ObjectRegistry.md                                                                                     | -                      |
@@ -105,3 +107,7 @@ All public functions and methods in tracker.go have traceability comments:
 | Variable.GetAccess           | crc-Variable.md                                                                                                           | -                      |
 | Variable.IsReadable          | crc-Variable.md                                                                                                           | -                      |
 | Variable.IsWritable          | crc-Variable.md                                                                                                           | -                      |
+| Variable.IsAction            | crc-Variable.md                                                                                                           | -                      |
+| Variable.NavigationValue     | crc-Variable.md                                                                                                           | -                      |
+| updateWrapper (internal)     | crc-Variable.md                                                                                                           | -                      |
+| Resolver.CreateWrapper       | crc-Resolver.md                                                                                                           | -                      |

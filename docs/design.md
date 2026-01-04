@@ -211,7 +211,7 @@ type ObjectRef struct {
 ```go
 type weakEntry struct {
     weak  weak.Pointer[any]  // weak reference to object
-    varID int64              // associated variable ID
+    objID int64              // object ID for ObjectRef serialization
 }
 ```
 

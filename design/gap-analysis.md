@@ -61,7 +61,7 @@ Design artifacts created for `github.com/zot/change-tracker` Go package.
 | Variables()        | Yes | -        | Yes  |
 | RootVariables()    | Yes | -        | Yes  |
 | Children()         | Yes | -        | Yes  |
-| RegisterObject()   | Yes | -        | Yes  |
+| register() (internal via ToValueJSON) | Yes | Yes | Yes  |
 | UnregisterObject() | Yes | -        | Yes  |
 | LookupObject()     | Yes | Yes      | Yes  |
 | GetObject()        | Yes | -        | Yes  |

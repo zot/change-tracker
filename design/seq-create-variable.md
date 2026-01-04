@@ -86,17 +86,12 @@ Client              Tracker             Variable            Parent          Regi
   |                    |                    |                   | newVar.ID     |
   |                    |---------------------------------->     |               |
   |                    |                    |                   |               |
-  |                    |    [if Value is pointer/map]           |               |
-  |                    | register           |                   |               |
-  |                    | (Value, ID)        |                   |               |
-  |                    |-------------------------------------------------->     |
-  |                    |                                                        |
-  |                    |<--------------------------------------------------'    |
-  |                    |                    |                   |               |
   |                    |    [if Access != "action"]             |               |
   |                    | ToValueJSON        |                   |               |
   |                    | (Value)            |                   |               |
   |                    |--------.           |                   |               |
+  |                    |        | (auto-registers              |               |
+  |                    |        |  pointers/maps)              |               |
   |                    |<-------' json      |                   |               |
   |                    |                    |                   |               |
   |                    |                    | ValueJSON = json  |               |
@@ -126,7 +121,7 @@ Client              Tracker             Variable            Parent          Regi
 - Path parsing splits dot-separated string into elements
 - Integer strings become int path elements, others remain strings
 - The "priority" property sets ValuePriority (low/medium/high)
-- Objects (pointers/maps) are automatically registered
+- Objects (pointers/maps) are automatically registered via ToValueJSON (see seq-to-value-json.md)
 - ValueJSON is cached for later change detection
 - If props is nil, an empty map is initialized
 - For "action" access: initial value computation is skipped to avoid premature action invocation

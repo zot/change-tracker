@@ -15,7 +15,7 @@
 
 ### Does
 - NewTracker(): creates new tracker instance with self as resolver
-- CreateVariable(value, parentID, path, props): creates variable with path+query parsing, assigns ID, registers objects, caches value, adds to rootIDs if root, adds ID to parent's ChildIDs if child
+- CreateVariable(value, parentID, path, props): creates variable with path+query parsing, assigns ID, caches value, calls ToValueJSON (which auto-registers objects), adds to rootIDs if root, adds ID to parent's ChildIDs if child
 - GetVariable(id): retrieves variable by ID
 - DestroyVariable(id): removes variable, unregisters object, removes from change tracking, removes from rootIDs if root, removes ID from parent's ChildIDs if child
 - DetectChanges(): performs depth-first tree traversal from root variables, skips inactive variables and their descendants, compares current values to cached ValueJSON, marks value as changed, calls sortChanges, clears internal change records, returns []Change sorted by priority
@@ -24,11 +24,10 @@
 - Variables(): returns all variables
 - RootVariables(): returns variables with no parent (uses rootIDs set)
 - Children(parentID): returns child variables of a parent (uses parent's ChildIDs)
-- RegisterObject(obj, varID): manually registers pointer/map in object registry
 - UnregisterObject(obj): removes object from registry
-- LookupObject(obj): finds variable ID for registered object
-- GetObject(varID): retrieves object by variable ID (may return nil if collected)
-- ToValueJSON(value): serializes value to Value JSON form
+- LookupObject(obj): finds ID for registered object
+- GetObject(id): retrieves object by ID (may return nil if collected)
+- ToValueJSON(value): serializes value to Value JSON form; auto-registers unregistered pointers/maps (this is the ONLY way objects get registered)
 - ToValueJSONBytes(value): serializes value to JSON bytes
 - Get(obj, pathElement): resolver implementation using reflection
 - Set(obj, pathElement, value): resolver implementation using reflection

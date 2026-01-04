@@ -11,6 +11,7 @@
 - Set(obj, pathElement, value): assigns value at path element within obj
 - Call(obj, methodName): invokes zero-arg method, returns result
 - CallWith(obj, methodName, value): invokes one-arg method (void only)
+- CreateWrapper(variable *Variable): creates a wrapper object for the variable (returns nil if no wrapper needed)
 
 ## Collaborators
 - Tracker: tracker implements this interface as default resolver
@@ -57,6 +58,36 @@ The tracker's reflection-based resolver supports:
 - Method must take exactly one argument
 - Method must not return any values (void only)
 - Argument type must be assignable from passed value
+
+### CreateWrapper Method
+The CreateWrapper method allows custom resolvers to create wrapper objects that stand in for a variable's value when child variables navigate paths.
+
+**Signature:**
+```go
+CreateWrapper(variable *Variable) any
+```
+
+**Behavior:**
+- Called when a variable has the "wrapper" property set and its ValueJSON is non-nil
+- Called again when ValueJSON changes during DetectChanges
+- Returns a wrapper object that children will navigate through instead of the original value
+- Returns nil if no wrapper is needed (default Tracker implementation always returns nil)
+
+**Return Value Semantics:**
+- **Same pointer as v.WrapperValue**: Wrapper is preserved with its state; no unregister/re-register, no WrapperJSON recomputation
+- **Different pointer (non-nil)**: Old wrapper unregistered, new wrapper registered and WrapperJSON recomputed
+- **nil**: Old wrapper unregistered and cleared
+
+This allows CreateWrapper to:
+- Update the existing wrapper in place and return it to preserve persistent state (caches, cursors, etc.)
+- Return a new wrapper when the wrapper type or structure needs to change
+- Return nil to remove the wrapper entirely
+
+**Use Cases:**
+- Provide a different interface to children than the underlying value
+- Add computed properties or methods
+- Implement adapters or facades
+- Maintain persistent state across value changes (e.g., caches, selection state)
 
 ### Variable Access Property
 

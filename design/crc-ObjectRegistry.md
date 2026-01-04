@@ -1,26 +1,32 @@
 # ObjectRegistry
-**Source Spec:** main.md, api.md
+**Source Spec:** main.md, api.md, value-json.md
 
 ## Responsibilities
 
 ### Knows
-- entries: map[uintptr]weakEntry - maps object address to weak reference and variable ID
+- entries: map[uintptr]weakEntry - maps object address to weak reference and ID
 - (internal to Tracker - not a separate type)
 
 ### Does
-- register(obj, varID): stores weak reference to object with associated variable ID
+- register(obj, id): (internal) stores weak reference to object with associated ID
 - unregister(obj): removes object from registry
-- lookup(obj): finds variable ID for object
-- getObject(varID): retrieves object by variable ID (returns nil if collected)
+- lookup(obj): finds ID for object
+- getObject(id): retrieves object by ID (returns nil if collected)
 - cleanup(): removes entries for garbage-collected objects (automatic via weak refs)
 
 ## Collaborators
-- Tracker: owns and manages the registry
-- Variable: objects are registered when variables are created
+- Tracker: owns and manages the registry; ToValueJSON performs registration
+- ToValueJSON: the only mechanism that registers objects (automatic during serialization)
 
 ## Sequences
-- seq-create-variable.md: objects registered during variable creation
-- seq-to-value-json.md: registry consulted during serialization
+- seq-to-value-json.md: auto-registers unregistered pointers/maps during serialization
+
+## Registration Mechanism
+
+Objects are registered **only** via `ToValueJSON()`:
+- When ToValueJSON encounters an unregistered pointer or map, it allocates the next available ID and registers the object
+- There is no public RegisterObject method - registration is internal only
+- This applies to: variable values (during CreateVariable/DetectChanges), wrapper objects, and nested objects in arrays
 
 ## Notes
 
@@ -34,7 +40,7 @@
 ```go
 type weakEntry struct {
     weak  weak.Pointer[any]  // weak reference to object
-    varID int64              // associated variable ID
+    objID int64              // object ID for ObjectRef serialization
 }
 ```
 

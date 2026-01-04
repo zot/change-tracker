@@ -343,25 +343,24 @@ priority := variable.GetPropertyPriority("label")  // Returns priority level
 
 **Automatic Registration**:
 ```go
-// Objects are registered automatically when creating variables
+// Objects are registered automatically via ToValueJSON
 person := &Person{Name: "Alice"}
 root := tracker.CreateVariable(person, 0, "", nil)
-// person is now registered with ID = root.ID
+// person is now registered with its own unique object ID
 ```
 
-**Manual Registration** (rarely needed):
+**Looking Up Objects**:
 ```go
-// Register object manually
-tracker.RegisterObject(myObject, varID)
-
-// Look up object's variable ID
-if id, ok := tracker.LookupObject(myObject); ok {
-    fmt.Printf("Object is registered with variable %d\n", id)
+// Look up object's ID
+if objID, ok := tracker.LookupObject(myObject); ok {
+    fmt.Printf("Object is registered with ID %d\n", objID)
 }
 
-// Retrieve object by variable ID
-obj := tracker.GetObject(varID)
+// Retrieve object by ID
+obj := tracker.GetObject(objID)
 ```
+
+Note: There is no manual registration API. Objects are registered automatically via `ToValueJSON()` when their `ValueJSON` is computed.
 
 ---
 

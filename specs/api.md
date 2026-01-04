@@ -242,21 +242,7 @@ func (t *Tracker) Children(parentID int64) []*Variable
 
 ## Object Registry Methods
 
-### RegisterObject
-
-Manually registers an object with a variable ID.
-
-```go
-func (t *Tracker) RegisterObject(obj any, varID int64) bool
-```
-
-**Parameters:**
-- `obj` - The object to register (must be a pointer)
-- `varID` - The variable ID to associate with this object
-
-**Returns:** `true` if registered, `false` if obj is not a pointer.
-
-**Note:** Objects are automatically registered when `CreateVariable` is called with a pointer value. This method is for manual registration when needed.
+Objects are registered automatically via `ToValueJSON()` - there is no manual registration API. See value-json.md for details.
 
 ### UnregisterObject
 
@@ -268,20 +254,20 @@ func (t *Tracker) UnregisterObject(obj any)
 
 ### LookupObject
 
-Finds the variable ID for a registered object.
+Finds the object ID for a registered object.
 
 ```go
 func (t *Tracker) LookupObject(obj any) (int64, bool)
 ```
 
-**Returns:** The variable ID and `true` if found, or `0` and `false` if not registered.
+**Returns:** The object ID and `true` if found, or `0` and `false` if not registered.
 
 ### GetObject
 
-Retrieves an object by its variable ID.
+Retrieves an object by its object ID.
 
 ```go
-func (t *Tracker) GetObject(varID int64) any
+func (t *Tracker) GetObject(objID int64) any
 ```
 
 **Returns:** The object, or nil if not found or if the weak reference has been collected.
@@ -300,7 +286,9 @@ func (t *Tracker) ToValueJSON(value any) any
 - Primitives (string, number, bool, nil) pass through unchanged
 - Registered objects (pointers, maps) become `ObjectRef{Obj: id}`
 - Slices/arrays become slices with elements in Value JSON form
-- Unregistered pointers/maps cause an error
+- Unregistered pointers/maps are auto-registered and become `ObjectRef{Obj: id}`
+
+**Auto-Registration:** This is the only way objects get registered. When an unregistered pointer or map is encountered during serialization, it is automatically registered with the next available ID. This applies to variable values (when computing ValueJSON), wrappers (when computing WrapperJSON), and nested objects in arrays.
 
 ### ToValueJSONBytes
 

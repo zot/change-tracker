@@ -54,12 +54,21 @@
 | VJ6.2 | Not ObjectRef | 42 | (0, false) |
 | VJ6.3 | Zero ID ref | ObjectRef{Obj:0} | (0, true) |
 
-## Error Scenarios
+### ToValueJSON - Auto-Registration
+| ID | Scenario | Input | Expected Output |
+|----|----------|-------|-----------------|
+| VJ7.1 | Unregistered pointer | *T (not registered) | ObjectRef{Obj: auto-assigned ID} |
+| VJ7.2 | Unregistered map | map (not registered) | ObjectRef{Obj: auto-assigned ID} |
+| VJ7.3 | Array of unregistered | []*T{p1,p2} (not registered) | [{"obj":1},{"obj":2}] (auto-registered) |
+| VJ7.4 | Mixed registered/unregistered | []*T{p1,p2} (p1 registered, p2 not) | [{"obj":1},{"obj":2}] |
+| VJ7.5 | Same unregistered twice | []*T{p,p} (not registered) | [{"obj":1},{"obj":1}] (registered once) |
+| VJ7.6 | Lookup after auto-reg | LookupObject(p) after ToValueJSON([]*T{p}) | (id, true) |
+| VJ7.7 | Nested unregistered | [][]any{{p1},{p2}} | [[{"obj":1}],[{"obj":2}]] |
 
-| ID | Scenario | Input | Expected Error |
-|----|----------|-------|----------------|
-| VJE1 | Unregistered pointer | *T (not registered) | "unregistered pointer" |
-| VJE2 | Unregistered map | map (not registered) | "unregistered map" |
+## Struct Value Handling
+
+| ID | Scenario | Input | Expected Output |
+|----|----------|-------|-----------------|
 | VJE3 | Struct value | T{} (not pointer) | treated as? (define behavior) |
 
 ## Change Detection via Value JSON

@@ -78,6 +78,14 @@
 //	// Serialize to Value JSON - registered objects become {"obj": id}
 //	json := tracker.ToValueJSON(alice)  // {"obj": 1}
 //
+// Unregistered objects found during ToValueJSON serialization are auto-registered.
+// This enables arrays of objects to be properly serialized as arrays of object references:
+//
+//	people := []*Person{{Name: "Alice"}, {Name: "Bob"}}
+//	json := tracker.ToValueJSON(people)  // [{"obj": 2}, {"obj": 3}]
+//
+// Per protocol spec: "Arrays contain only variable values (no nested objects, only references)"
+//
 // # Change Detection
 //
 // DetectChanges performs a depth-first traversal from root variables,

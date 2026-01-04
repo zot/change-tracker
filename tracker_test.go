@@ -2,6 +2,7 @@
 package changetracker
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -277,53 +278,55 @@ func TestCreateVariable_ChildWithIndexPath(t *testing.T) {
 	}
 }
 
-// T2.6: Pointer value registered
+// T2.6: Pointer value registered via ToValueJSON
 func TestCreateVariable_PointerRegistered(t *testing.T) {
 	tr := NewTracker()
 	person := &Person{Name: "Alice"}
 	v := tr.CreateVariable(person, 0, "", nil)
 
-	// Check object is in registry
+	// Check object is in registry (auto-registered via ToValueJSON)
 	id, ok := tr.LookupObject(person)
 	if !ok {
 		t.Error("pointer should be registered")
 	}
-	if id != v.ID {
-		t.Errorf("registered ID should be %d, got %d", v.ID, id)
+	// Object gets its own unique ID via ToValueJSON (not necessarily the variable's ID)
+	if id == 0 {
+		t.Error("registered ID should be non-zero")
 	}
 
-	// ValueJSON should be ObjectRef
+	// ValueJSON should be ObjectRef with the object's registered ID
 	ref, ok := v.ValueJSON.(ObjectRef)
 	if !ok {
 		t.Errorf("expected ObjectRef, got %T", v.ValueJSON)
 	}
-	if ref.Obj != v.ID {
-		t.Errorf("ObjectRef.Obj should be %d, got %d", v.ID, ref.Obj)
+	if ref.Obj != id {
+		t.Errorf("ObjectRef.Obj should match registered ID %d, got %d", id, ref.Obj)
 	}
 }
 
-// T2.7: Map value registered
+// T2.7: Map value registered via ToValueJSON
 func TestCreateVariable_MapRegistered(t *testing.T) {
 	tr := NewTracker()
 	data := map[string]int{"a": 1, "b": 2}
 	v := tr.CreateVariable(data, 0, "", nil)
 
-	// Check object is in registry
+	// Check object is in registry (auto-registered via ToValueJSON)
 	id, ok := tr.LookupObject(data)
 	if !ok {
 		t.Error("map should be registered")
 	}
-	if id != v.ID {
-		t.Errorf("registered ID should be %d, got %d", v.ID, id)
+	// Object gets its own unique ID via ToValueJSON (not necessarily the variable's ID)
+	if id == 0 {
+		t.Error("registered ID should be non-zero")
 	}
 
-	// ValueJSON should be ObjectRef
+	// ValueJSON should be ObjectRef with the object's registered ID
 	ref, ok := v.ValueJSON.(ObjectRef)
 	if !ok {
 		t.Errorf("expected ObjectRef, got %T", v.ValueJSON)
 	}
-	if ref.Obj != v.ID {
-		t.Errorf("ObjectRef.Obj should be %d, got %d", v.ID, ref.Obj)
+	if ref.Obj != id {
+		t.Errorf("ObjectRef.Obj should match registered ID %d, got %d", id, ref.Obj)
 	}
 }
 
@@ -500,7 +503,8 @@ func TestDetectChanges(t *testing.T) {
 
 	// T5.1: No changes - returns empty []Change
 	tr.CreateVariable(42, 0, "", nil)
-	changes := tr.DetectChanges()
+	tr.DetectChanges()
+	changes := tr.GetChanges()
 	if len(changes) != 0 {
 		t.Error("no changes expected")
 	}
@@ -511,7 +515,8 @@ func TestDetectChanges(t *testing.T) {
 	child := tr.CreateVariable(nil, v.ID, "Age", nil)
 
 	person.Age = 31
-	changes = tr.DetectChanges()
+	tr.DetectChanges()
+	changes = tr.GetChanges()
 	found := false
 	for _, c := range changes {
 		if c.VariableID == child.ID && c.ValueChanged {
@@ -525,7 +530,8 @@ func TestDetectChanges(t *testing.T) {
 
 	// T5.8: No false positives - returns empty []Change
 	person.Age = 31 // same value
-	changes = tr.DetectChanges()
+	tr.DetectChanges()
+	changes = tr.GetChanges()
 	found = false
 	for _, c := range changes {
 		if c.VariableID == child.ID {
@@ -540,18 +546,20 @@ func TestDetectChanges(t *testing.T) {
 	// T5.9: ValueJSON updated after detection
 	person.Age = 32
 	tr.DetectChanges()
+	tr.GetChanges() // consume changes
 	if child.ValueJSON != 32 {
 		t.Errorf("ValueJSON should be updated to 32, got %v", child.ValueJSON)
 	}
 
-	// T5.10: Clears internal state after call
+	// T5.10: Clears internal state after call (GetChanges clears)
 	person.Age = 33
 	tr.DetectChanges()
+	tr.GetChanges()
 	if len(tr.valueChanges) != 0 {
-		t.Error("valueChanges should be cleared after DetectChanges")
+		t.Error("valueChanges should be cleared after GetChanges")
 	}
-	if len(tr.propertyChanges) != 0 {
-		t.Error("propertyChanges should be cleared after DetectChanges")
+	if len(tr.PropertyChanges) != 0 {
+		t.Error("propertyChanges should be cleared after GetChanges")
 	}
 }
 
@@ -566,7 +574,8 @@ func TestDetectChanges_SortingAndProperties(t *testing.T) {
 	vHigh.SetProperty("x:high", "1")
 	vLow.SetProperty("y:low", "2")
 
-	changes := tr.DetectChanges()
+	tr.DetectChanges()
+	changes := tr.GetChanges()
 	if len(changes) < 2 {
 		t.Fatalf("expected at least 2 changes, got %d", len(changes))
 	}
@@ -589,7 +598,8 @@ func TestDetectChanges_SortingAndProperties(t *testing.T) {
 	tr2 := NewTracker()
 	v := tr2.CreateVariable(42, 0, "", nil)
 	v.SetProperty("label", "test")
-	changes = tr2.DetectChanges()
+	tr2.DetectChanges()
+	changes = tr2.GetChanges()
 
 	found := false
 	for _, c := range changes {
@@ -603,18 +613,20 @@ func TestDetectChanges_SortingAndProperties(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("property change should appear in DetectChanges result")
+		t.Error("property change should appear in GetChanges result")
 	}
 
 	// T5.13: Slice reuse
 	tr3 := NewTracker()
 	v3 := tr3.CreateVariable(42, 0, "", nil)
 	v3.SetProperty("x", "1")
-	changes1 := tr3.DetectChanges()
+	tr3.DetectChanges()
+	changes1 := tr3.GetChanges()
 	cap1 := cap(changes1)
 
 	v3.SetProperty("y", "2")
-	changes2 := tr3.DetectChanges()
+	tr3.DetectChanges()
+	changes2 := tr3.GetChanges()
 
 	// The slice should be reused (same backing array)
 	if len(changes2) > 0 && cap(changes2) < cap1 {
@@ -688,7 +700,8 @@ func TestChildren(t *testing.T) {
 
 func TestDetectChanges_Empty(t *testing.T) {
 	tr := NewTracker()
-	changes := tr.DetectChanges()
+	tr.DetectChanges()
+	changes := tr.GetChanges()
 	if len(changes) != 0 {
 		t.Error("should return empty slice when no changes")
 	}
@@ -702,9 +715,11 @@ func TestDetectChanges_ValueChange(t *testing.T) {
 
 	// First DetectChanges clears initial state
 	tr.DetectChanges()
+	tr.GetChanges()
 
 	person.Age = 31
-	changes := tr.DetectChanges()
+	tr.DetectChanges()
+	changes := tr.GetChanges()
 
 	if len(changes) == 0 {
 		t.Fatal("should have at least one change")
@@ -728,10 +743,12 @@ func TestDetectChanges_PropertyChange(t *testing.T) {
 
 	// First DetectChanges clears initial state
 	tr.DetectChanges()
+	tr.GetChanges()
 
 	v.SetProperty("label", "test")
 
-	changes := tr.DetectChanges()
+	tr.DetectChanges()
+	changes := tr.GetChanges()
 	if len(changes) == 0 {
 		t.Fatal("should have at least one change")
 	}
@@ -762,13 +779,15 @@ func TestDetectChanges_PriorityOrder(t *testing.T) {
 
 	// First DetectChanges clears initial state
 	tr.DetectChanges()
+	tr.GetChanges()
 
 	// Trigger property changes with different priorities
 	vHigh.SetProperty("x:high", "1")
 	vMed.SetProperty("x", "2") // default medium
 	vLow.SetProperty("x:low", "3")
 
-	changes := tr.DetectChanges()
+	tr.DetectChanges()
+	changes := tr.GetChanges()
 	if len(changes) != 3 {
 		t.Fatalf("expected 3 changes, got %d", len(changes))
 	}
@@ -785,6 +804,7 @@ func TestDetectChanges_SplitByPriority(t *testing.T) {
 
 	// First DetectChanges clears initial state
 	tr.DetectChanges()
+	tr.GetChanges()
 
 	// Set properties with different priorities
 	v.SetProperty("high_prop:high", "val1")
@@ -792,7 +812,8 @@ func TestDetectChanges_SplitByPriority(t *testing.T) {
 
 	// Also need to trigger a value change by modifying a trackable value
 	// Since this is a primitive, we'll add a struct-based test
-	changes := tr.DetectChanges()
+	tr.DetectChanges()
+	changes := tr.GetChanges()
 
 	// Should have multiple entries for same variable at different priorities
 	highCount := 0
@@ -822,18 +843,21 @@ func TestDetectChanges_SliceReuse(t *testing.T) {
 
 	// First DetectChanges clears initial state
 	tr.DetectChanges()
+	tr.GetChanges()
 
 	v.SetProperty("x", "1")
-	changes1 := tr.DetectChanges()
+	tr.DetectChanges()
+	changes1 := tr.GetChanges()
 	_ = changes1 // first call
 
 	// Make new changes
 	v.SetProperty("y", "2")
-	changes2 := tr.DetectChanges()
+	tr.DetectChanges()
+	changes2 := tr.GetChanges()
 
 	// The returned slices should use the same underlying array
 	if len(changes2) == 0 {
-		t.Error("should have changes after second DetectChanges")
+		t.Error("should have changes after second GetChanges")
 	}
 }
 
@@ -1021,10 +1045,12 @@ func TestVariable_Properties(t *testing.T) {
 		t.Errorf("setting path property should update Path field, got %v", v.Path)
 	}
 
-	// V4.13: SetProperty records change in tracker (appears in DetectChanges result)
+	// V4.13: SetProperty records change in tracker (appears in GetChanges result)
 	tr.DetectChanges() // clear previous changes
+	tr.GetChanges()
 	v.SetProperty("test", "value")
-	changes := tr.DetectChanges()
+	tr.DetectChanges()
+	changes := tr.GetChanges()
 	found := false
 	for _, c := range changes {
 		if c.VariableID == v.ID {
@@ -1368,38 +1394,43 @@ func TestRegisterObject(t *testing.T) {
 
 	// OR1.1: Register pointer
 	person := &Person{Name: "Alice"}
-	ok := tr.RegisterObject(person, 1)
+	id, ok := tr.RegisterObject(person)
 	if !ok {
 		t.Error("should register pointer")
+	}
+	if id <= 0 {
+		t.Error("should return positive ID")
 	}
 
 	// OR1.2: Register map
 	m := map[string]int{"a": 1}
-	ok = tr.RegisterObject(m, 2)
+	id2, ok := tr.RegisterObject(m)
 	if !ok {
 		t.Error("should register map")
 	}
+	if id2 == id {
+		t.Error("different objects should get different IDs")
+	}
 
 	// OR1.3: Register non-pointer
-	ok = tr.RegisterObject(42, 3)
+	_, ok = tr.RegisterObject(42)
 	if ok {
 		t.Error("should not register int")
 	}
 
 	// OR1.4: Register nil
-	ok = tr.RegisterObject(nil, 4)
+	_, ok = tr.RegisterObject(nil)
 	if ok {
 		t.Error("should not register nil")
 	}
 
-	// OR1.5: Re-register same (updates varID)
-	ok = tr.RegisterObject(person, 10)
+	// OR1.5: Re-register same returns same ID
+	id3, ok := tr.RegisterObject(person)
 	if !ok {
-		t.Error("should re-register pointer")
+		t.Error("should succeed for already-registered pointer")
 	}
-	id, _ := tr.LookupObject(person)
-	if id != 10 {
-		t.Errorf("re-register should update ID to 10, got %d", id)
+	if id3 != id {
+		t.Errorf("re-register should return same ID %d, got %d", id, id3)
 	}
 }
 
@@ -1407,7 +1438,7 @@ func TestRegisterObject(t *testing.T) {
 func TestUnregisterObject(t *testing.T) {
 	tr := NewTracker()
 	person := &Person{Name: "Alice"}
-	tr.RegisterObject(person, 1)
+	tr.RegisterObject(person)
 
 	// OR2.1: Unregister existing
 	tr.UnregisterObject(person)
@@ -1434,10 +1465,10 @@ func TestLookupObject(t *testing.T) {
 	}
 
 	// OR3.1: Lookup registered
-	tr.RegisterObject(person, 1)
+	regID, _ := tr.RegisterObject(person)
 	id, ok := tr.LookupObject(person)
-	if !ok || id != 1 {
-		t.Errorf("should find registered object with ID 1, got id=%d, ok=%v", id, ok)
+	if !ok || id != regID {
+		t.Errorf("should find registered object with ID %d, got id=%d, ok=%v", regID, id, ok)
 	}
 }
 
@@ -1445,10 +1476,10 @@ func TestLookupObject(t *testing.T) {
 func TestGetObject(t *testing.T) {
 	tr := NewTracker()
 	person := &Person{Name: "Alice"}
-	tr.RegisterObject(person, 1)
+	regID, _ := tr.RegisterObject(person)
 
 	// OR4.1: Get registered
-	obj := tr.GetObject(1)
+	obj := tr.GetObject(regID)
 	if obj == nil {
 		t.Error("should get registered object")
 	}
@@ -1464,20 +1495,29 @@ func TestGetObject(t *testing.T) {
 func TestObjectRegistry_CreateVariable(t *testing.T) {
 	tr := NewTracker()
 
-	// CV1: Auto-register pointer
+	// CV1: Auto-register pointer via ToValueJSON
 	person := &Person{Name: "Alice"}
 	v := tr.CreateVariable(person, 0, "", nil)
 	id, ok := tr.LookupObject(person)
-	if !ok || id != v.ID {
-		t.Error("pointer should be auto-registered with variable ID")
+	if !ok {
+		t.Error("pointer should be auto-registered")
+	}
+	// The ObjectRef in ValueJSON should match the registered ID
+	ref, ok := v.ValueJSON.(ObjectRef)
+	if !ok || ref.Obj != id {
+		t.Error("ValueJSON should be ObjectRef with registered ID")
 	}
 
-	// CV2: Auto-register map
+	// CV2: Auto-register map via ToValueJSON
 	m := map[string]int{"a": 1}
 	v2 := tr.CreateVariable(m, 0, "", nil)
 	id, ok = tr.LookupObject(m)
-	if !ok || id != v2.ID {
-		t.Error("map should be auto-registered with variable ID")
+	if !ok {
+		t.Error("map should be auto-registered")
+	}
+	ref, ok = v2.ValueJSON.(ObjectRef)
+	if !ok || ref.Obj != id {
+		t.Error("ValueJSON should be ObjectRef with registered ID")
 	}
 
 	// CV3: No register primitive
@@ -1490,20 +1530,17 @@ func TestObjectIdentity(t *testing.T) {
 	tr := NewTracker()
 	person := &Person{Name: "Alice"}
 
-	// OI1: Same object twice
-	tr.RegisterObject(person, 1)
-	tr.RegisterObject(person, 1) // same object, same ID
-	id, _ := tr.LookupObject(person)
-	if id != 1 {
-		t.Error("same object should have same ID")
+	// OI1: Same object twice returns same ID
+	id1a, _ := tr.RegisterObject(person)
+	id1b, _ := tr.RegisterObject(person) // same object, same ID
+	if id1a != id1b {
+		t.Errorf("same object should have same ID, got %d and %d", id1a, id1b)
 	}
 
-	// OI2: Different objects
+	// OI2: Different objects get different IDs
 	person2 := &Person{Name: "Bob"}
-	tr.RegisterObject(person2, 2)
-	id1, _ := tr.LookupObject(person)
-	id2, _ := tr.LookupObject(person2)
-	if id1 == id2 {
+	id2, _ := tr.RegisterObject(person2)
+	if id1a == id2 {
 		t.Error("different objects should have different IDs")
 	}
 }
@@ -1586,20 +1623,20 @@ func TestToValueJSON_Arrays(t *testing.T) {
 	// VJ2.6: Pointer slice (registered)
 	p1 := &Person{Name: "Alice"}
 	p2 := &Person{Name: "Bob"}
-	tr.RegisterObject(p1, 1)
-	tr.RegisterObject(p2, 2)
+	p1ID, _ := tr.RegisterObject(p1)
+	p2ID, _ := tr.RegisterObject(p2)
 	result = tr.ToValueJSON([]*Person{p1, p2})
 	arr = result.([]any)
 	if len(arr) != 2 {
 		t.Error("pointer slice should have 2 elements")
 	}
 	ref1, ok := arr[0].(ObjectRef)
-	if !ok || ref1.Obj != 1 {
-		t.Error("first element should be ObjectRef with ID 1")
+	if !ok || ref1.Obj != p1ID {
+		t.Errorf("first element should be ObjectRef with ID %d", p1ID)
 	}
 	ref2, ok := arr[1].(ObjectRef)
-	if !ok || ref2.Obj != 2 {
-		t.Error("second element should be ObjectRef with ID 2")
+	if !ok || ref2.Obj != p2ID {
+		t.Errorf("second element should be ObjectRef with ID %d", p2ID)
 	}
 }
 
@@ -1609,19 +1646,19 @@ func TestToValueJSON_ObjectRefs(t *testing.T) {
 
 	// VJ3.1: Registered pointer
 	person := &Person{Name: "Alice"}
-	tr.RegisterObject(person, 1)
+	personID, _ := tr.RegisterObject(person)
 	result := tr.ToValueJSON(person)
 	ref, ok := result.(ObjectRef)
-	if !ok || ref.Obj != 1 {
+	if !ok || ref.Obj != personID {
 		t.Error("registered pointer should serialize to ObjectRef")
 	}
 
 	// VJ3.2: Registered map
 	m := map[string]int{"a": 1}
-	tr.RegisterObject(m, 2)
+	mID, _ := tr.RegisterObject(m)
 	result = tr.ToValueJSON(m)
 	ref, ok = result.(ObjectRef)
-	if !ok || ref.Obj != 2 {
+	if !ok || ref.Obj != mID {
 		t.Error("registered map should serialize to ObjectRef")
 	}
 
@@ -1647,10 +1684,11 @@ func TestToValueJSONBytes(t *testing.T) {
 
 	// VJ4.2: Object ref
 	person := &Person{Name: "Alice"}
-	tr.RegisterObject(person, 1)
+	personID, _ := tr.RegisterObject(person)
 	bytes, err = tr.ToValueJSONBytes(person)
-	if err != nil || string(bytes) != `{"obj":1}` {
-		t.Errorf("object ref bytes: err=%v, got=%s", err, bytes)
+	expected := fmt.Sprintf(`{"obj":%d}`, personID)
+	if err != nil || string(bytes) != expected {
+		t.Errorf("object ref bytes: err=%v, expected=%s, got=%s", err, expected, bytes)
 	}
 
 	// VJ4.3: Array
@@ -1704,22 +1742,43 @@ func TestGetObjectRefID(t *testing.T) {
 	}
 }
 
-// VJE1, VJE2: Unregistered pointer/map
+// VJE1, VJE2: Unregistered pointer/map - auto-registered
 func TestToValueJSON_Unregistered(t *testing.T) {
 	tr := NewTracker()
 
-	// VJE1: Unregistered pointer returns nil (error case)
+	// VJE1: Unregistered pointer gets auto-registered
+	// Per spec: nested objects in arrays must be converted to references
 	person := &Person{Name: "Alice"}
 	result := tr.ToValueJSON(person)
-	if result != nil {
-		t.Error("unregistered pointer should return nil")
+	ref, ok := result.(ObjectRef)
+	if !ok {
+		t.Error("unregistered pointer should be auto-registered and return ObjectRef")
+	} else if ref.Obj <= 0 {
+		t.Error("auto-registered object should have positive ID")
 	}
 
-	// VJE2: Unregistered map returns nil (error case)
+	// Verify it was actually registered
+	if id, found := tr.LookupObject(person); !found {
+		t.Error("pointer should be registered after ToValueJSON")
+	} else if id != ref.Obj {
+		t.Error("registered ID should match returned ObjectRef")
+	}
+
+	// VJE2: Unregistered map gets auto-registered
 	m := map[string]int{"a": 1}
 	result = tr.ToValueJSON(m)
-	if result != nil {
-		t.Error("unregistered map should return nil")
+	ref, ok = result.(ObjectRef)
+	if !ok {
+		t.Error("unregistered map should be auto-registered and return ObjectRef")
+	} else if ref.Obj <= 0 {
+		t.Error("auto-registered map should have positive ID")
+	}
+
+	// Verify it was actually registered
+	if id, found := tr.LookupObject(m); !found {
+		t.Error("map should be registered after ToValueJSON")
+	} else if id != ref.Obj {
+		t.Error("registered ID should match returned ObjectRef")
 	}
 }
 
@@ -1740,7 +1799,8 @@ func TestIntegration_FullLifecycle(t *testing.T) {
 	person.Age = 31
 
 	// Detect - should return changes and clear internal state
-	changes := tr.DetectChanges()
+	tr.DetectChanges()
+	changes := tr.GetChanges()
 	found := false
 	for _, c := range changes {
 		if c.VariableID == ageChild.ID && c.ValueChanged {
@@ -1752,10 +1812,11 @@ func TestIntegration_FullLifecycle(t *testing.T) {
 		t.Error("should detect age change")
 	}
 
-	// Verify no false positives - DetectChanges clears internal state
-	changes = tr.DetectChanges()
+	// Verify no false positives - GetChanges clears internal state
+	tr.DetectChanges()
+	changes = tr.GetChanges()
 	if len(changes) != 0 {
-		t.Error("should not detect changes after previous DetectChanges")
+		t.Error("should not detect changes after previous GetChanges")
 	}
 }
 
@@ -1779,7 +1840,8 @@ func TestIntegration_ParentChildTree(t *testing.T) {
 
 	// Modify city
 	person.Address.City = "LA"
-	changes := tr.DetectChanges()
+	tr.DetectChanges()
+	changes := tr.GetChanges()
 
 	// Check if city change is detected
 	found := false
@@ -1803,7 +1865,7 @@ func TestIntegration_ObjectIdentity(t *testing.T) {
 	person2 := &Person{Name: "Bob", Address: address}
 
 	// Register address explicitly (it's not auto-registered as a nested field)
-	tr.RegisterObject(address, 100)
+	addressID, _ := tr.RegisterObject(address)
 
 	tr.CreateVariable(person1, 0, "", nil)
 	tr.CreateVariable(person2, 0, "", nil)
@@ -1813,8 +1875,8 @@ func TestIntegration_ObjectIdentity(t *testing.T) {
 	if !ok {
 		t.Error("shared address should be registered")
 	}
-	if id != 100 {
-		t.Errorf("expected address ID 100, got %d", id)
+	if id != addressID {
+		t.Errorf("expected address ID %d, got %d", addressID, id)
 	}
 
 	// Value JSON should use same ObjectRef for same object
@@ -1955,6 +2017,7 @@ func TestActive_SkipInactive(t *testing.T) {
 
 	// Clear initial state
 	tr.DetectChanges()
+	tr.GetChanges()
 
 	// Set child to inactive
 	child.SetActive(false)
@@ -1963,7 +2026,8 @@ func TestActive_SkipInactive(t *testing.T) {
 	person.Age = 31
 
 	// DetectChanges should not detect the change
-	changes := tr.DetectChanges()
+	tr.DetectChanges()
+	changes := tr.GetChanges()
 	for _, c := range changes {
 		if c.VariableID == child.ID {
 			t.Error("inactive child should not be in changes")
@@ -1981,6 +2045,7 @@ func TestActive_SkipDescendants(t *testing.T) {
 
 	// Clear initial state
 	tr.DetectChanges()
+	tr.GetChanges()
 
 	// Set address (middle) to inactive - should skip city too
 	addressVar.SetActive(false)
@@ -1989,7 +2054,8 @@ func TestActive_SkipDescendants(t *testing.T) {
 	person.Address.City = "LA"
 
 	// DetectChanges should not detect city change
-	changes := tr.DetectChanges()
+	tr.DetectChanges()
+	changes := tr.GetChanges()
 	for _, c := range changes {
 		if c.VariableID == addressVar.ID || c.VariableID == cityVar.ID {
 			t.Errorf("inactive subtree should not be in changes, got variable %d", c.VariableID)
@@ -2006,18 +2072,21 @@ func TestActive_Reactivate(t *testing.T) {
 
 	// Clear initial state
 	tr.DetectChanges()
+	tr.GetChanges()
 
 	// Set to inactive
 	child.SetActive(false)
 	person.Age = 31
 	tr.DetectChanges() // Should not detect
+	tr.GetChanges()
 
 	// Re-activate
 	child.SetActive(true)
 	person.Age = 32 // Change again
 
 	// Now should detect
-	changes := tr.DetectChanges()
+	tr.DetectChanges()
+	changes := tr.GetChanges()
 	found := false
 	for _, c := range changes {
 		if c.VariableID == child.ID && c.ValueChanged {
@@ -2044,13 +2113,15 @@ func TestDetectChanges_TreeTraversal(t *testing.T) {
 
 	// Clear initial state
 	tr.DetectChanges()
+	tr.GetChanges()
 
 	// Modify both fields
 	person.Name = "Bob"
 	person.Age = 31
 
 	// DetectChanges should find both changes via tree traversal
-	changes := tr.DetectChanges()
+	tr.DetectChanges()
+	changes := tr.GetChanges()
 	foundName := false
 	foundAge := false
 	for _, c := range changes {
@@ -2079,12 +2150,14 @@ func TestDetectChanges_MultiLevelTree(t *testing.T) {
 
 	// Clear initial state
 	tr.DetectChanges()
+	tr.GetChanges()
 
 	// Modify city (2 levels deep)
 	person.Address.City = "LA"
 
 	// DetectChanges should find city change via tree traversal
-	changes := tr.DetectChanges()
+	tr.DetectChanges()
+	changes := tr.GetChanges()
 	found := false
 	for _, c := range changes {
 		if c.VariableID == cityVar.ID && c.ValueChanged {
@@ -2109,13 +2182,15 @@ func TestDetectChanges_MultipleRoots(t *testing.T) {
 
 	// Clear initial state
 	tr.DetectChanges()
+	tr.GetChanges()
 
 	// Modify both
 	person1.Name = "Alice2"
 	person2.Name = "Bob2"
 
 	// Should detect both changes from different root trees
-	changes := tr.DetectChanges()
+	tr.DetectChanges()
+	changes := tr.GetChanges()
 	found1 := false
 	found2 := false
 	for _, c := range changes {
@@ -2550,8 +2625,10 @@ func TestAccess_ChangeDetection(t *testing.T) {
 	// V9.1: Read-only is scanned
 	readOnly := tr.CreateVariable(nil, parent.ID, "Name?access=r", nil)
 	tr.DetectChanges() // clear initial state
+	tr.GetChanges()
 	person.Name = "Bob"
-	changes := tr.DetectChanges()
+	tr.DetectChanges()
+	changes := tr.GetChanges()
 	found := false
 	for _, c := range changes {
 		if c.VariableID == readOnly.ID && c.ValueChanged {
@@ -2566,8 +2643,10 @@ func TestAccess_ChangeDetection(t *testing.T) {
 	// V9.2: Write-only is NOT scanned
 	writeOnly := tr.CreateVariable(nil, parent.ID, "Age?access=w", nil)
 	tr.DetectChanges() // clear initial state
+	tr.GetChanges()
 	person.Age = 31
-	changes = tr.DetectChanges()
+	tr.DetectChanges()
+	changes = tr.GetChanges()
 	for _, c := range changes {
 		if c.VariableID == writeOnly.ID {
 			t.Error("V9.2: write-only variable should NOT be scanned")
@@ -2583,8 +2662,10 @@ func TestAccess_ChangeDetection(t *testing.T) {
 	addrVar := tr2.CreateVariable(nil, root2.ID, "Address?access=w", nil)
 	cityVar := tr2.CreateVariable(nil, addrVar.ID, "City", nil) // default rw
 	tr2.DetectChanges()                                         // clear
+	tr2.GetChanges()
 	person2.Address.City = "LA"
-	changes = tr2.DetectChanges()
+	tr2.DetectChanges()
+	changes = tr2.GetChanges()
 	found = false
 	for _, c := range changes {
 		if c.VariableID == cityVar.ID && c.ValueChanged {
@@ -2603,8 +2684,10 @@ func TestAccess_ChangeDetection(t *testing.T) {
 	nameVar := tr3.CreateVariable(nil, root3.ID, "Name?access=r", nil)
 	nameVar.SetActive(false)
 	tr3.DetectChanges()
+	tr3.GetChanges()
 	person3.Name = "Bob"
-	changes = tr3.DetectChanges()
+	tr3.DetectChanges()
+	changes = tr3.GetChanges()
 	for _, c := range changes {
 		if c.VariableID == nameVar.ID {
 			t.Error("V9.5: inactive read-only variable should NOT be scanned")
@@ -2705,4 +2788,395 @@ func TestAccess_ActionMethodSideEffect(t *testing.T) {
 
 	// Verify the method was called by checking no error occurred
 	// (The actual side effect verification would need a method that modifies state)
+}
+
+// ============================================================================
+// Wrapper Tests
+// ============================================================================
+
+// WrapperData is a wrapper type for testing
+type WrapperData struct {
+	WrappedName string
+	Extra       int
+}
+
+// wrapperResolver is a custom resolver that creates wrappers
+type wrapperResolver struct {
+	*Tracker
+}
+
+func (r *wrapperResolver) CreateWrapper(v *Variable) any {
+	// Create a wrapper that exposes different fields
+	if v.Value == nil {
+		return nil
+	}
+	if p, ok := v.Value.(*Person); ok {
+		return &WrapperData{
+			WrappedName: "Wrapped:" + p.Name,
+			Extra:       42,
+		}
+	}
+	return nil
+}
+
+// W1: Wrapper created when wrapper property exists
+func TestWrapper_CreatedWithProperty(t *testing.T) {
+	tr := NewTracker()
+	wr := &wrapperResolver{tr}
+	tr.Resolver = wr
+
+	person := &Person{Name: "Alice"}
+	v := tr.CreateVariable(person, 0, "?wrapper=true", nil)
+
+	if v.WrapperValue == nil {
+		t.Error("W1: WrapperValue should be created when wrapper property exists")
+	}
+
+	wrapper, ok := v.WrapperValue.(*WrapperData)
+	if !ok {
+		t.Errorf("W1: WrapperValue should be *WrapperData, got %T", v.WrapperValue)
+	}
+	if wrapper.WrappedName != "Wrapped:Alice" {
+		t.Errorf("W1: WrappedName should be 'Wrapped:Alice', got %q", wrapper.WrappedName)
+	}
+
+	if v.WrapperJSON == nil {
+		t.Error("W1: WrapperJSON should be set")
+	}
+}
+
+// W2: Wrapper not created when wrapper property absent
+func TestWrapper_NotCreatedWithoutProperty(t *testing.T) {
+	tr := NewTracker()
+	wr := &wrapperResolver{tr}
+	tr.Resolver = wr
+
+	person := &Person{Name: "Alice"}
+	v := tr.CreateVariable(person, 0, "", nil)
+
+	if v.WrapperValue != nil {
+		t.Error("W2: WrapperValue should be nil when wrapper property is absent")
+	}
+	if v.WrapperJSON != nil {
+		t.Error("W2: WrapperJSON should be nil when wrapper property is absent")
+	}
+}
+
+// W3: Wrapper uses NavigationValue for child access
+func TestWrapper_ChildNavigation(t *testing.T) {
+	tr := NewTracker()
+	wr := &wrapperResolver{tr}
+	tr.Resolver = wr
+
+	person := &Person{Name: "Alice"}
+	parent := tr.CreateVariable(person, 0, "?wrapper=true", nil)
+
+	// Child navigates to wrapper's field instead of original value
+	child := tr.CreateVariable(nil, parent.ID, "WrappedName", nil)
+	val, err := child.Get()
+	if err != nil {
+		t.Errorf("W3: Get should succeed, err=%v", err)
+	}
+	if val != "Wrapped:Alice" {
+		t.Errorf("W3: Child should navigate to WrapperValue, got %v", val)
+	}
+
+	// Extra field from wrapper
+	extraChild := tr.CreateVariable(nil, parent.ID, "Extra", nil)
+	val, err = extraChild.Get()
+	if err != nil {
+		t.Errorf("W3: Get Extra should succeed, err=%v", err)
+	}
+	if val != 42 {
+		t.Errorf("W3: Extra should be 42, got %v", val)
+	}
+}
+
+// W4: NavigationValue returns WrapperValue when present
+func TestWrapper_NavigationValue(t *testing.T) {
+	tr := NewTracker()
+	wr := &wrapperResolver{tr}
+	tr.Resolver = wr
+
+	person := &Person{Name: "Alice"}
+
+	// Without wrapper
+	v1 := tr.CreateVariable(person, 0, "", nil)
+	if v1.NavigationValue() != person {
+		t.Error("W4: NavigationValue should return Value when no wrapper")
+	}
+
+	// With wrapper
+	v2 := tr.CreateVariable(person, 0, "?wrapper=true", nil)
+	if v2.NavigationValue() == person {
+		t.Error("W4: NavigationValue should not return original Value when wrapper exists")
+	}
+	if v2.NavigationValue() != v2.WrapperValue {
+		t.Error("W4: NavigationValue should return WrapperValue when wrapper exists")
+	}
+}
+
+// W5: Wrapper unregistered on DestroyVariable
+func TestWrapper_UnregisteredOnDestroy(t *testing.T) {
+	tr := NewTracker()
+	wr := &wrapperResolver{tr}
+	tr.Resolver = wr
+
+	person := &Person{Name: "Alice"}
+	v := tr.CreateVariable(person, 0, "?wrapper=true", nil)
+
+	wrapper := v.WrapperValue
+	_, ok := tr.LookupObject(wrapper)
+	if !ok {
+		t.Error("W5: Wrapper should be registered initially")
+	}
+
+	tr.DestroyVariable(v.ID)
+
+	// After destroy, wrapper should be unregistered
+	_, ok = tr.LookupObject(wrapper)
+	if ok {
+		t.Error("W5: Wrapper should be unregistered after destroy")
+	}
+}
+
+// W6: SetProperty("wrapper", ...) triggers wrapper update
+func TestWrapper_SetPropertyTriggers(t *testing.T) {
+	tr := NewTracker()
+	wr := &wrapperResolver{tr}
+	tr.Resolver = wr
+
+	person := &Person{Name: "Alice"}
+	v := tr.CreateVariable(person, 0, "", nil)
+
+	if v.WrapperValue != nil {
+		t.Error("W6: Initially no wrapper")
+	}
+
+	// Add wrapper property
+	v.SetProperty("wrapper", "true")
+
+	if v.WrapperValue == nil {
+		t.Error("W6: Wrapper should be created after setting property")
+	}
+
+	// Remove wrapper property
+	oldWrapper := v.WrapperValue
+	v.SetProperty("wrapper", "")
+
+	if v.WrapperValue != nil {
+		t.Error("W6: Wrapper should be removed after clearing property")
+	}
+
+	// Old wrapper should be unregistered
+	_, ok := tr.LookupObject(oldWrapper)
+	if ok {
+		t.Error("W6: Old wrapper should be unregistered")
+	}
+}
+
+// W7: Wrapper re-created when ValueJSON changes
+func TestWrapper_RecreatedOnValueChange(t *testing.T) {
+	tr := NewTracker()
+	wr := &wrapperResolver{tr}
+	tr.Resolver = wr
+
+	person := &Person{Name: "Alice"}
+	v := tr.CreateVariable(person, 0, "?wrapper=true", nil)
+
+	oldWrapper := v.WrapperValue
+	oldWrapperData := oldWrapper.(*WrapperData)
+	if oldWrapperData.WrappedName != "Wrapped:Alice" {
+		t.Error("W7: Initial wrapper should have Alice")
+	}
+
+	// Change the value by setting a new pointer (changes ValueJSON)
+	// Note: Just modifying person.Name wouldn't change ValueJSON since the pointer stays the same
+	newPerson := &Person{Name: "Bob"}
+	err := v.Set(newPerson)
+	if err != nil {
+		t.Fatalf("W7: Set failed: %v", err)
+	}
+
+	// Wrapper should be re-created with new value
+	if v.WrapperValue == nil {
+		t.Error("W7: Wrapper should still exist after value change")
+	}
+	newWrapperData := v.WrapperValue.(*WrapperData)
+	if newWrapperData.WrappedName != "Wrapped:Bob" {
+		t.Errorf("W7: New wrapper should have Bob, got %q", newWrapperData.WrappedName)
+	}
+
+	// Old wrapper should be unregistered
+	_, ok := tr.LookupObject(oldWrapper)
+	if ok {
+		t.Error("W7: Old wrapper should be unregistered after value change")
+	}
+}
+
+// W8: Wrapper not created when CreateWrapper returns nil
+func TestWrapper_CreateReturnsNil(t *testing.T) {
+	tr := NewTracker()
+	// Use a resolver that returns nil for CreateWrapper
+	// The default Tracker.CreateWrapper returns nil
+
+	person := &Person{Name: "Alice"}
+	v := tr.CreateVariable(person, 0, "?wrapper=true", nil)
+
+	// Even with wrapper property, no wrapper because CreateWrapper returns nil
+	if v.WrapperValue != nil {
+		t.Error("W8: WrapperValue should be nil when CreateWrapper returns nil")
+	}
+}
+
+// W9: Set via child navigates through wrapper
+func TestWrapper_SetViaChild(t *testing.T) {
+	tr := NewTracker()
+	wr := &wrapperResolver{tr}
+	tr.Resolver = wr
+
+	person := &Person{Name: "Alice"}
+	parent := tr.CreateVariable(person, 0, "?wrapper=true", nil)
+
+	// Child navigates to wrapper's field
+	child := tr.CreateVariable(nil, parent.ID, "Extra?access=rw", nil)
+
+	// Set via wrapper
+	err := child.Set(100)
+	if err != nil {
+		t.Errorf("W9: Set should succeed, err=%v", err)
+	}
+
+	wrapper := parent.WrapperValue.(*WrapperData)
+	if wrapper.Extra != 100 {
+		t.Errorf("W9: Wrapper.Extra should be 100, got %d", wrapper.Extra)
+	}
+}
+
+// StatefulWrapper is a wrapper that maintains persistent state
+type StatefulWrapper struct {
+	Data      *Person
+	CallCount int // tracks how many times it was updated
+}
+
+// reusingResolver returns the same wrapper on subsequent calls
+type reusingResolver struct {
+	*Tracker
+}
+
+func (r *reusingResolver) CreateWrapper(v *Variable) any {
+	if v.Value == nil {
+		return nil
+	}
+	p, ok := v.Value.(*Person)
+	if !ok {
+		return nil
+	}
+
+	// Reuse existing wrapper if present
+	if w, ok := v.WrapperValue.(*StatefulWrapper); ok {
+		w.Data = p
+		w.CallCount++
+		return w // Same pointer, state preserved
+	}
+
+	// Create new wrapper
+	return &StatefulWrapper{
+		Data:      p,
+		CallCount: 1,
+	}
+}
+
+// W10: Wrapper reuse preserves state and avoids re-registration
+func TestWrapper_ReusePreservesState(t *testing.T) {
+	tr := NewTracker()
+	rr := &reusingResolver{tr}
+	tr.Resolver = rr
+
+	person := &Person{Name: "Alice"}
+	v := tr.CreateVariable(person, 0, "?wrapper=true", nil)
+
+	// Initial wrapper created
+	wrapper1 := v.WrapperValue.(*StatefulWrapper)
+	if wrapper1.CallCount != 1 {
+		t.Errorf("W10: Initial CallCount should be 1, got %d", wrapper1.CallCount)
+	}
+	initialWrapperJSON := v.WrapperJSON
+
+	// Change the value by setting a new pointer (changes ValueJSON)
+	// Note: Just modifying person.Name wouldn't change ValueJSON since the pointer stays the same
+	newPerson := &Person{Name: "Bob"}
+	err := v.Set(newPerson)
+	if err != nil {
+		t.Fatalf("W10: Set failed: %v", err)
+	}
+
+	// Same wrapper should be reused (reusingResolver returns same pointer)
+	wrapper2 := v.WrapperValue.(*StatefulWrapper)
+	if wrapper2 != wrapper1 {
+		t.Error("W10: Wrapper should be the same pointer (reused)")
+	}
+	if wrapper2.CallCount != 2 {
+		t.Errorf("W10: CallCount should be 2 after value change, got %d", wrapper2.CallCount)
+	}
+	if wrapper2.Data.Name != "Bob" {
+		t.Errorf("W10: Data should be updated to Bob, got %q", wrapper2.Data.Name)
+	}
+
+	// WrapperJSON should NOT be recomputed (same pointer)
+	if v.WrapperJSON != initialWrapperJSON {
+		t.Error("W10: WrapperJSON should not change when wrapper is reused")
+	}
+
+	// Wrapper should still be registered
+	_, ok := tr.LookupObject(wrapper1)
+	if !ok {
+		t.Error("W10: Wrapper should still be registered")
+	}
+}
+
+// W11: Wrapper replacement when different pointer returned
+func TestWrapper_ReplacementOnDifferentPointer(t *testing.T) {
+	tr := NewTracker()
+	wr := &wrapperResolver{tr} // This always creates new wrappers
+	tr.Resolver = wr
+
+	person := &Person{Name: "Alice"}
+	v := tr.CreateVariable(person, 0, "?wrapper=true", nil)
+
+	wrapper1 := v.WrapperValue
+	wrapperJSON1 := v.WrapperJSON
+
+	// Change value by setting a new pointer (changes ValueJSON)
+	// Note: Just modifying person.Name wouldn't change ValueJSON since the pointer stays the same
+	newPerson := &Person{Name: "Bob"}
+	err := v.Set(newPerson)
+	if err != nil {
+		t.Fatalf("W11: Set failed: %v", err)
+	}
+
+	wrapper2 := v.WrapperValue
+	wrapperJSON2 := v.WrapperJSON
+
+	// Should be different wrappers (wrapperResolver always creates new)
+	if wrapper2 == wrapper1 {
+		t.Error("W11: Wrapper should be different pointer (replaced)")
+	}
+
+	// WrapperJSON should be recomputed
+	if wrapperJSON2 == wrapperJSON1 {
+		t.Error("W11: WrapperJSON should be recomputed when wrapper changes")
+	}
+
+	// Old wrapper should be unregistered
+	_, ok := tr.LookupObject(wrapper1)
+	if ok {
+		t.Error("W11: Old wrapper should be unregistered")
+	}
+
+	// New wrapper should be registered
+	_, ok = tr.LookupObject(wrapper2)
+	if !ok {
+		t.Error("W11: New wrapper should be registered")
+	}
 }
