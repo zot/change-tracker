@@ -1271,12 +1271,12 @@ func (v *Variable) Set(value any) error {
 		return fmt.Errorf("cannot Set on read-only variable (access: %q)", v.GetAccess())
 	}
 
+	// Root or no-path variable: update Value directly
+	v.Value = value
+	v.ValueJSON = v.tracker.ToValueJSON(value)
+	v.updateWrapper()
+	v.SetType()
 	if len(v.Path) == 0 {
-		// Root or no-path variable: update Value directly
-		v.Value = value
-		v.ValueJSON = v.tracker.ToValueJSON(value)
-		v.updateWrapper()
-		v.SetType()
 		return nil
 	}
 
