@@ -105,10 +105,10 @@
 |----|----------|-------|----------------|
 | E1 | Invalid parent ID | CreateVariable with bad parentID | error or nil parent handling |
 | E2 | Path navigation failure | invalid path element | error from Get |
-| E3 | rw access with () path | access: "rw", path: "Value()" | error: use action for zero-arg methods |
+| E3 | rw access with () path | access: "rw", path: "Value()" | OK (variadic call supported) |
 | E4 | rw access with (_) path | access: "rw", path: "SetX(_)" | error: cannot read from setter |
 | E5 | r access with (_) path | access: "r", path: "SetX(_)" | error: cannot read from setter |
-| E6 | w access with () path | access: "w", path: "Value()" | error: use action for zero-arg methods |
+| E6 | w access with () path | access: "w", path: "Value()" | error: use rw, r, or action for zero-arg methods |
 
 ## Integration Tests
 

@@ -66,6 +66,15 @@ func (c *Counter) SetName(n string) {
 	c.name = n
 }
 
+// Variadic method for rw + () path testing
+// Get calls with no args, Set calls with one arg
+func (c *Counter) Count(args ...int) int {
+	if len(args) > 0 {
+		c.value = args[0]
+	}
+	return c.value
+}
+
 // Methods for error testing
 func (c *Counter) NeedsArg(x int) int {
 	return x
@@ -2349,10 +2358,10 @@ func TestResolver_CallWithErrors(t *testing.T) {
 		t.Error("CWE5 CallWith two-arg method should error")
 	}
 
-	// CWE6: Method returns value (not void)
+	// CWE6: Method returns value - now allowed (return values ignored)
 	err = tr.CallWith(counter, "ReturnsSomething", 10)
-	if err == nil {
-		t.Error("CWE6 CallWith non-void method should error")
+	if err != nil {
+		t.Errorf("CWE6 CallWith should accept methods with return values, got: %v", err)
 	}
 
 	// CWE7: Arg type mismatch
@@ -2744,15 +2753,24 @@ func TestAccess_VsPathSemantics(t *testing.T) {
 		t.Errorf("V10.4: Set should succeed, err=%v, value=%d", err, counter.value)
 	}
 
-	// V10.5: access=rw + path () -> NOW INVALID (CreateVariable should panic)
-	func() {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("V10.5: access=rw + path () should panic at CreateVariable")
-			}
-		}()
-		tr.CreateVariable(nil, root.ID, "Value()?access=rw", nil)
-	}()
+	// V10.5: access=rw + path () -> Get: OK, Set: OK (variadic call)
+	// Use Count() which is a variadic method: Count(args ...int) int
+	counter.value = 50
+	v5 := tr.CreateVariable(nil, root.ID, "Count()?access=rw", nil)
+	val, err = v5.Get()
+	if err != nil {
+		t.Errorf("V10.5: Get should succeed, err=%v", err)
+	}
+	if val != 50 {
+		t.Errorf("V10.5: Get should return 50, got %v", val)
+	}
+	err = v5.Set(200)
+	if err != nil {
+		t.Errorf("V10.5: Set should succeed (variadic call), err=%v", err)
+	}
+	if counter.value != 200 {
+		t.Errorf("V10.5: Set should update value to 200, got %d", counter.value)
+	}
 
 	// V10.6: access=action + path () -> Get: error (access), Set: OK (calls method)
 	counter.value = 100 // reset

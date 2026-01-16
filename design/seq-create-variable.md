@@ -130,6 +130,6 @@ Client              Tracker             Variable            Parent          Regi
 ### Access/Path Validation
 CreateVariable validates that the access mode is compatible with the path:
 - `access: "r"` or `access: "rw"` with path ending in `(_)` returns error (cannot read from setter)
-- `access: "w"` or `access: "rw"` with path ending in `()` returns error (use `action` for zero-arg methods)
-- `rw` is a union of `r` and `w`, so it inherits restrictions from both
-- Only `action` access allows both `()` and `(_)` path endings without restriction
+- `access: "w"` with path ending in `()` returns error (use `rw`, `r`, or `action` for zero-arg methods)
+- Paths ending in `()` are allowed with `rw`, `r`, or `action` access (supports variadic method calls)
+- With `rw` access and `()` path: Get() calls method with no args, Set() calls method with args

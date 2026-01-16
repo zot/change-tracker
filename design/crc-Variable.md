@@ -75,20 +75,20 @@ For write-only or action variables with `()` paths (zero-arg methods), Set() cal
 
 CreateVariable validates access/path combinations:
 
-| Access   | Valid Path Endings     | Invalid Path Endings |
-|----------|------------------------|---------------------|
-| `rw`     | fields, indices        | `()`, `(_)`         |
-| `r`      | fields, indices, `()`  | `(_)`               |
-| `w`      | fields, indices, `(_)` | `()`                |
-| `action` | `()`, `(_)`            | (none)              |
+| Access   | Valid Path Endings        | Invalid Path Endings |
+|----------|---------------------------|---------------------|
+| `rw`     | fields, indices, `()`     | `(_)`               |
+| `r`      | fields, indices, `()`     | `(_)`               |
+| `w`      | fields, indices, `(_)`    | `()`                |
+| `action` | `()`, `(_)`               | (none)              |
 
-- `rw` is a union of `r` and `w`, so it inherits restrictions from both: no `()` (from `w`) and no `(_)` (from `r`)
 - Paths ending in `(_)` require `access: "w"` or `access: "action"` (not `r` or `rw`)
-- Paths ending in `()` require `access: "r"` or `access: "action"` (not `w` or `rw`)
+- Paths ending in `()` are allowed with `rw`, `r`, or `action` access (supports variadic method calls)
+- With `rw` access and `()` path: Get() calls method with no args, Set() calls method with args
 
 Validation errors at CreateVariable:
 - `access: "r"` or `access: "rw"` with path ending in `(_)` -> error (cannot read from setter)
-- `access: "w"` or `access: "rw"` with path ending in `()` -> error (use `action` for zero-arg methods)
+- `access: "w"` with path ending in `()` -> error (use `rw`, `r`, or `action` for zero-arg methods)
 
 ### Wrapper Support
 

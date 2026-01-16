@@ -100,7 +100,7 @@
 | CWE3 | Unexported method | CallWith(obj, "setPrivate", v) | "method not found" or "unexported" |
 | CWE4 | Method takes no args | CallWith(obj, "NoArgs", v) | "doesn't take one argument" |
 | CWE5 | Method takes 2+ args | CallWith(obj, "TwoArgs", v) | "doesn't take one argument" |
-| CWE6 | Method returns value | CallWith(obj, "ReturnsSomething", v) | "must be void" |
+| CWE6 | Method returns value | CallWith(obj, "ReturnsSomething", v) | OK (return ignored) |
 | CWE7 | Arg type mismatch | CallWith(obj, "SetInt", "str") | "type mismatch" |
 
 ## Path Semantics Tests
@@ -111,12 +111,13 @@
 | PM1 | Getter mid-path | "Address().City" | Get | OK, returns city |
 | PM2 | Getter mid-path | "Address().City" | Set | OK, sets city |
 | PM3 | Path ends in getter | "Value()" | Get | OK, returns value |
-| PM4 | Path ends in getter | "Value()" | Set | ERROR, read-only |
+| PM4 | Path ends in getter (rw) | "Value()?access=rw" | Set | OK, calls method with args |
 | PM5 | Path ends in setter | "SetValue(_)" | Set | OK, calls setter |
 | PM6 | Path ends in setter | "SetValue(_)" | Get | ERROR, write-only |
 | PM7 | Setter not terminal | "SetAddr(_).City" | Get | ERROR, setter must be terminal |
 | PM8 | Setter not terminal | "SetAddr(_).City" | Set | ERROR, setter must be terminal |
 | PM9 | Chain getters | "Outer().Inner().Value()" | Get | OK, chains calls |
+| PM10 | Path ends in getter (r) | "Value()?access=r" | Set | ERROR, read-only access |
 
 ## Access Property Tests
 
@@ -140,7 +141,7 @@
 | AP1 | rw + field | "rw" | "Field" | OK | OK |
 | AP2 | r + field | "r" | "Field" | OK | ERROR (access) |
 | AP3 | w + field | "w" | "Field" | ERROR (access) | OK |
-| AP4 | rw + getter | "rw" | "Value()" | N/A - CreateVariable fails | N/A |
+| AP4 | rw + getter | "rw" | "Value()" | OK | OK (variadic call) |
 | AP5 | r + getter | "r" | "Value()" | OK | ERROR (access) |
 | AP6 | w + getter | "w" | "Value()" | N/A - CreateVariable fails | N/A |
 | AP7 | rw + setter | "rw" | "SetX(_)" | N/A - CreateVariable fails | N/A |
@@ -150,7 +151,7 @@
 | AP11 | action + getter | "action" | "Value()" | ERROR (access) | OK (side effect) |
 | AP12 | action + setter | "action" | "SetX(_)" | ERROR (access) | OK |
 
-Note: Path restrictions are now validated at CreateVariable time. Combinations marked "N/A - CreateVariable fails" will return an error before the variable is created. Only `action` access allows both `()` and `(_)` path endings.
+Note: Path restrictions are validated at CreateVariable time. Combinations marked "N/A - CreateVariable fails" will return an error before the variable is created. `rw`, `r`, and `action` allow `()` path endings. Only `w` and `action` allow `(_)` path endings.
 
 ### Write-Only and Action Method Side Effects
 | ID | Scenario | Access | Path | Set Behavior |
@@ -187,17 +188,17 @@ Note: Write-only (`w`) access can no longer use `()` paths - use `action` access
 ### Path Restriction Validation at CreateVariable
 | ID | Scenario | Access | Path | Expected |
 |----|----------|--------|------|----------|
-| PR1 | rw rejects () path | "rw" | "Value()" | ERROR: use action for zero-arg methods |
+| PR1 | rw allows () path | "rw" | "Value()" | OK |
 | PR2 | rw rejects (_) path | "rw" | "SetValue(_)" | ERROR: cannot read from setter |
 | PR3 | r allows () path | "r" | "Value()" | OK |
 | PR4 | r rejects (_) path | "r" | "SetValue(_)" | ERROR: cannot read from setter |
-| PR5 | w rejects () path | "w" | "Value()" | ERROR: use action for zero-arg methods |
+| PR5 | w rejects () path | "w" | "Value()" | ERROR: use rw, r, or action for zero-arg methods |
 | PR6 | w allows (_) path | "w" | "SetValue(_)" | OK |
 | PR7 | action allows () path | "action" | "Trigger()" | OK |
 | PR8 | action allows (_) path | "action" | "AddItem(_)" | OK |
-| PR9 | default (rw) rejects () | (none) | "Value()" | ERROR |
+| PR9 | default (rw) allows () | (none) | "Value()" | OK |
 | PR10 | default (rw) rejects (_) | (none) | "SetX(_)" | ERROR |
-| PR11 | nested path ending in () | "rw" | "Obj.Value()" | ERROR |
+| PR11 | nested path ending in () | "rw" | "Obj.Value()" | OK |
 | PR12 | nested path ending in (_) | "r" | "Obj.SetX(_)" | ERROR |
 
 ## Path Element Type Tests

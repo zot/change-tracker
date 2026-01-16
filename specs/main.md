@@ -76,14 +76,14 @@ The **Access** field controls read/write permissions and initialization behavior
 | `w`      | ✗   | ✓   | ✗                | ✓                      |
 | `action` | ✗   | ✓   | ✗                | ✗                      |
 
-- **rw** (default): Full read-write access, included in change detection. Paths must not end in `()` or `(_)`.
+- **rw** (default): Full read-write access, included in change detection. Paths may end in `()` but not `(_)`.
 - **r**: Read-only, included in change detection but `Set()` fails. Paths may end in `()`.
 - **w**: Write-only, `Get()` fails and excluded from change detection. Paths may end in `(_)`.
 - **action**: Like write-only, but initial value is NOT computed during `CreateVariable`. Paths may end in `()` or `(_)`.
 
 The `action` mode is designed for variables that trigger side effects (like calling `AddContact(_)`) where navigating the path during creation would invoke the action prematurely.
 
-**Path restrictions:** Paths ending in `(_)` require `access: "w"` or `access: "action"`. Paths ending in `()` require `access: "r"` or `access: "action"`.
+**Path restrictions:** Paths ending in `(_)` require `access: "w"` or `access: "action"`. Paths ending in `()` are allowed with `rw`, `r`, or `action` access.
 
 ### Priorities
 

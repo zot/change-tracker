@@ -9,8 +9,8 @@
 ### Does
 - Get(obj, pathElement): retrieves value at path element within obj
 - Set(obj, pathElement, value): assigns value at path element within obj
-- Call(obj, methodName): invokes zero-arg method, returns result
-- CallWith(obj, methodName, value): invokes one-arg method (void only)
+- Call(obj, methodName): invokes zero-arg method or variadic with no args, returns result
+- CallWith(obj, methodName, value): invokes one-arg method or variadic method, ignores return value
 - CreateWrapper(variable *Variable): creates a wrapper object for the variable (returns nil if no wrapper needed)
 
 ## Collaborators
@@ -37,7 +37,7 @@ This is an interface type. The Tracker provides a default implementation using G
 | Pattern | Get | Set | Position |
 |---------|-----|-----|----------|
 | `methodName()` | OK (calls method) | OK (if not terminal) | anywhere |
-| Path ending in `()` | OK | ERROR (read-only) | terminal |
+| Path ending in `()` | OK | OK with `rw` access (variadic call) | terminal |
 | `methodName(_)` | ERROR (write-only) | OK (calls method) | terminal only |
 
 ### Default Implementation (Tracker)
@@ -55,8 +55,8 @@ The tracker's reflection-based resolver supports:
 
 ### CallWith Method Requirements
 - Method must be exported
-- Method must take exactly one argument
-- Method must not return any values (void only)
+- Method must take exactly one argument or be variadic with one parameter
+- Return values are ignored
 - Argument type must be assignable from passed value
 
 ### CreateWrapper Method
@@ -108,18 +108,18 @@ Access checks occur at the Variable level before path resolution. Both access an
 
 CreateVariable validates that the access mode is compatible with the path ending:
 
-| Access   | Valid Path Endings     | Invalid Path Endings |
-|----------|------------------------|---------------------|
-| `rw`     | fields, indices        | `()`, `(_)`         |
-| `r`      | fields, indices, `()`  | `(_)`               |
-| `w`      | fields, indices, `(_)` | `()`                |
-| `action` | `()`, `(_)`            | (none)              |
+| Access   | Valid Path Endings        | Invalid Path Endings |
+|----------|---------------------------|---------------------|
+| `rw`     | fields, indices, `()`     | `(_)`               |
+| `r`      | fields, indices, `()`     | `(_)`               |
+| `w`      | fields, indices, `(_)`    | `()`                |
+| `action` | `()`, `(_)`               | (none)              |
 
 Key rules:
-- `rw` is a union of `r` and `w`, so it inherits restrictions from both: no `()` (from `w`) and no `(_)` (from `r`)
 - Paths ending in `(_)` require `access: "w"` or `access: "action"` (not `r` or `rw`)
-- Paths ending in `()` require `access: "r"` or `access: "action"` (not `w` or `rw`)
+- Paths ending in `()` are allowed with `rw`, `r`, or `action` access (supports variadic method calls)
+- With `rw` access and `()` path: Get() calls method with no args, Set() calls method with args
 
 CreateVariable validation errors:
 - `access: "r"` or `access: "rw"` with path ending in `(_)` -> error (cannot read from setter)
-- `access: "w"` or `access: "rw"` with path ending in `()` -> error (use `action` for zero-arg methods)
+- `access: "w"` with path ending in `()` -> error (use `rw`, `r`, or `action` for zero-arg methods)

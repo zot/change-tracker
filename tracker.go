@@ -53,8 +53,8 @@ type Resolver interface {
 	Call(obj any, methodName string) (any, error)
 
 	// CallWith invokes a one-argument method with the given value.
-	// The method must be void (no return values).
-	// Used for setter-style methods at path terminals.
+	// Return values are ignored.
+	// Used for setter-style methods at path terminals and variadic methods with rw access.
 	CallWith(obj any, methodName string, value any) error
 
 	// CreateValue creates a value for the given variable.
@@ -398,7 +398,7 @@ func validatePath(path []any) error {
 // Returns an error if the combination is invalid.
 // Rules:
 //   - access "r" or "rw": path must not end with (_) (cannot read from setter)
-//   - access "w" or "rw": path must not end with () (use action for zero-arg methods)
+//   - access "w": path must not end with () (use rw, r, or action for zero-arg methods)
 //   - access "action": any path ending is allowed
 func validateAccessPath(access string, path []any) error {
 	if len(path) == 0 {
@@ -408,9 +408,9 @@ func validateAccessPath(access string, path []any) error {
 
 	// Check for getter call at terminal
 	if isGetterCall(lastElem) {
-		// () paths require access "r" or "action" (not "w" or "rw")
-		if access == "w" || access == "rw" {
-			return fmt.Errorf("path ending in %q requires access \"r\" or \"action\", not %q", lastElem, access)
+		// () paths require access "rw", "r", or "action" (not "w")
+		if access == "w" {
+			return fmt.Errorf("path ending in %q requires access \"rw\", \"r\", or \"action\", not %q", lastElem, access)
 		}
 	}
 
@@ -1039,7 +1039,8 @@ func (t *Tracker) Call(obj any, methodName string) (any, error) {
 	}
 
 	mt := method.Type()
-	if mt.NumIn() != 0 {
+	// Allow variadic methods (NumIn=1 but IsVariadic) to be called with zero args
+	if mt.NumIn() != 0 && !mt.IsVariadic() {
 		return nil, fmt.Errorf("method %q requires arguments (use CallWith)", methodName)
 	}
 	if mt.NumOut() == 0 {
@@ -1081,16 +1082,26 @@ func (t *Tracker) CallWith(obj any, methodName string, value any) error {
 	}
 
 	mt := method.Type()
+	argVal := reflect.ValueOf(value)
+
+	// Handle variadic methods: pass the value directly
+	if mt.IsVariadic() {
+		if mt.NumIn() != 1 {
+			return fmt.Errorf("method %q must be variadic with one parameter", methodName)
+		}
+		elemType := mt.In(0).Elem()
+		if !argVal.Type().AssignableTo(elemType) {
+			return fmt.Errorf("argument type mismatch: cannot pass %s to variadic %s", argVal.Type(), elemType)
+		}
+		method.Call([]reflect.Value{argVal})
+		return nil
+	}
+
+	// Regular one-arg method
 	if mt.NumIn() != 1 {
 		return fmt.Errorf("method %q must take exactly one argument", methodName)
 	}
-	if mt.NumOut() != 0 {
-		return fmt.Errorf("method %q must not return values (void only)", methodName)
-	}
-
-	// Check argument type compatibility
 	argType := mt.In(0)
-	argVal := reflect.ValueOf(value)
 	if !argVal.Type().AssignableTo(argType) {
 		return fmt.Errorf("argument type mismatch: cannot pass %s to %s", argVal.Type(), argType)
 	}
@@ -1280,11 +1291,13 @@ func (v *Variable) Set(value any) error {
 		return nil
 	}
 
-	// Check if path ends in getter () - for readable variables this is read-only
-	// For action variables, allow calling the method for side effects
+	// Check if path ends in getter () - for r access this is read-only
+	// For rw access, allow calling the method with args (variadic call)
+	// For action access, allow calling the method for side effects
 	lastElem := v.Path[len(v.Path)-1]
 	isAction := v.IsAction()
-	if isGetterCall(lastElem) && !isAction {
+	isRW := v.GetAccess() == "rw"
+	if isGetterCall(lastElem) && !isAction && !isRW {
 		return fmt.Errorf("cannot Set on read-only path (ends in getter)")
 	}
 
@@ -1320,7 +1333,11 @@ func (v *Variable) Set(value any) error {
 		// Use CallWith for setter methods
 		return v.tracker.Resolver.CallWith(current, getMethodName(lastElem), value)
 	}
-	// For action variables with getter paths, call the method for side effects
+	// For rw access with getter paths, call the method with args (variadic call)
+	if isRW && isGetterCall(lastElem) {
+		return v.tracker.Resolver.CallWith(current, getMethodName(lastElem), value)
+	}
+	// For action variables with getter paths, call the method for side effects (no args)
 	if isAction && isGetterCall(lastElem) {
 		// Call the method for its side effects, ignoring return value
 		_, err := v.tracker.Resolver.Call(current, getMethodName(lastElem))

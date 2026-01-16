@@ -113,7 +113,14 @@
 | V10.5 | Access action + path () | access: "action", path: "DoAction()" | Get: error (access), Set: OK (calls method) |
 | V10.6 | Action method side effect | access: "action", path: "Trigger()" | Set: calls Trigger(), side effect occurs |
 
-Note: Invalid access/path combinations (e.g., `rw` with `()` or `(_)`, `r` with `(_)`, `w` with `()`) are rejected at CreateVariable time. See "Path Restriction Validation at CreateVariable" section for those tests.
+Note: Invalid access/path combinations (e.g., `rw` with `(_)`, `r` with `(_)`, `w` with `()`) are rejected at CreateVariable time. See "Path Restriction Validation at CreateVariable" section for those tests.
+
+### Access rw with () Path (Variadic Method Support)
+| ID | Scenario | Input | Expected Output |
+|----|----------|-------|-----------------|
+| V10.7 | rw + () path Get | access: "rw", path: "Value()" | Get: OK, calls method with no args |
+| V10.8 | rw + () path Set | access: "rw", path: "Value()" | Set: OK, calls method with args |
+| V10.9 | rw + () scanned | access: "rw", path: "Value()" | included in DetectChanges |
 
 ### Action vs Write-Only Creation Behavior
 | ID | Scenario | Input | Expected Output |
@@ -130,20 +137,20 @@ Note: Invalid access/path combinations (e.g., `rw` with `()` or `(_)`, `r` with 
 | ID | Scenario | Input | Expected Output |
 |----|----------|-------|-----------------|
 | V12.1 | rw + field path OK | access: "rw", path: "Field" | Variable created successfully |
-| V12.2 | rw + () path fails | access: "rw", path: "Value()" | error: use action for zero-arg methods |
+| V12.2 | rw + () path OK | access: "rw", path: "Value()" | Variable created successfully |
 | V12.3 | rw + (_) path fails | access: "rw", path: "SetValue(_)" | error: cannot read from setter |
 | V12.4 | r + field path OK | access: "r", path: "Field" | Variable created successfully |
 | V12.5 | r + () path OK | access: "r", path: "Value()" | Variable created successfully |
 | V12.6 | r + (_) path fails | access: "r", path: "SetValue(_)" | error: cannot read from setter |
 | V12.7 | w + field path OK | access: "w", path: "Field" | Variable created successfully |
 | V12.8 | w + (_) path OK | access: "w", path: "SetValue(_)" | Variable created successfully |
-| V12.9 | w + () path fails | access: "w", path: "Value()" | error: use action for zero-arg methods |
+| V12.9 | w + () path fails | access: "w", path: "Value()" | error: use rw, r, or action for zero-arg methods |
 | V12.10 | action + () path OK | access: "action", path: "Trigger()" | Variable created successfully |
 | V12.11 | action + (_) path OK | access: "action", path: "AddItem(_)" | Variable created successfully |
 | V12.12 | action + field path OK | access: "action", path: "Field" | Variable created successfully |
-| V12.13 | rw default + () fails | path: "Value()" (no access prop) | error: use action for zero-arg methods |
+| V12.13 | rw default + () OK | path: "Value()" (no access prop) | Variable created successfully |
 | V12.14 | rw default + (_) fails | path: "SetValue(_)" (no access prop) | error: cannot read from setter |
-| V12.15 | Nested path ending in () | access: "rw", path: "Obj.Value()" | error: use action for zero-arg methods |
+| V12.15 | Nested path ending in () OK | access: "rw", path: "Obj.Value()" | Variable created successfully |
 | V12.16 | Nested path ending in (_) | access: "r", path: "Obj.SetX(_)" | error: cannot read from setter |
 
 ### ChildIDs

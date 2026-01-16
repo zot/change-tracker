@@ -33,8 +33,9 @@ Variables use their tracker's `Resolver` field for `Get` and `Set` operations.
 
 **Zero-arg calls `methodName()`:**
 - Can appear anywhere in a path (beginning, middle, end)
-- Used for navigation (like getters)
-- Path ending in `()` is **read-only** (Get succeeds, Set fails)
+- Used for navigation (like getters) and variadic method calls
+- Path ending in `()` supports Get (calls with no args)
+- Path ending in `()` supports Set only with `rw` access (calls with args)
 
 **One-arg calls `methodName(_)`:**
 - Can only appear at the **end** of a path
@@ -46,8 +47,11 @@ Variables use their tracker's `Resolver` field for `Get` and `Set` operations.
 // Getter in middle of path - Set works on terminal field
 path: "Address().City"  // Get: OK, Set: OK (City is settable field)
 
-// Path ends in getter - read-only
-path: "Value()"  // Get: OK, Set: ERROR
+// Path ends in () with rw access - supports both Get and Set
+path: "Value()?access=rw"  // Get: OK (calls Value()), Set: OK (calls Value(args...))
+
+// Path ends in () with r access - read-only
+path: "Value()?access=r"  // Get: OK, Set: ERROR
 
 // Path ends in setter - write-only
 path: "SetValue(_)"  // Get: ERROR, Set: OK
@@ -142,8 +146,8 @@ valVar.Set(10)  // calls c.SetValue(10), c.value is now 10
 
 Method requirements for CallWith:
 - Must be exported
-- Must take exactly one argument
-- Must not return any values (void only)
+- Must take exactly one argument or be variadic with one parameter
+- Return values are ignored
 - Argument type must be assignable from the passed value
 
 ### Error Conditions
@@ -171,13 +175,12 @@ Method requirements for CallWith:
 **CallWith errors:**
 - `obj` is nil
 - Method not found or unexported
-- Method doesn't take exactly one argument
-- Method returns values (must be void)
+- Method doesn't take exactly one argument and is not variadic
 - Argument type mismatch
 
 **Path-level errors (Variable Get/Set):**
 - Get on path ending in `(_)` → error (write-only path)
-- Set on path ending in `()` → error (read-only path)
+- Set on path ending in `()` without `rw` access → error (requires `rw` access for Set)
 - `(_)` not at end of path → error (setter must be terminal)
 
 **Access property errors (Variable Get/Set):**
@@ -188,7 +191,7 @@ Method requirements for CallWith:
 
 **Access/path combination errors (CreateVariable):**
 - `access: "r"` or `access: "rw"` with path ending in `(_)` → error (cannot read from setter)
-- `access: "w"` or `access: "rw"` with path ending in `()` → error (use `action` for zero-arg methods)
+- `access: "w"` with path ending in `()` → error (use `rw`, `r`, or `action` for zero-arg methods)
 
 ## Custom Resolvers
 
@@ -284,7 +287,7 @@ readWrite := tracker.CreateVariable(nil, root.ID, "Name?access=rw", nil)
 
 Both `action` and `w` (write-only) prevent reading the variable's value and exclude it from change detection. The key differences:
 
-- **Write-Only (`w`)**: The initial value is computed during creation. Appropriate for settable fields like `Password` where you want to set values but not read them back. Paths must NOT end with zero-arg methods `()` - use `action` access for those. Paths MAY end with one-arg methods `(_)`.
+- **Write-Only (`w`)**: The initial value is computed during creation. Appropriate for settable fields like `Password` where you want to set values but not read them back. Paths must NOT end with zero-arg methods `()` - use `rw`, `r`, or `action` access for those. Paths MAY end with one-arg methods `(_)`.
 
 - **Action (`action`)**: The initial value is **not** computed during creation. Designed for action-triggering methods where navigating the path would invoke the action prematurely. Paths may end with zero-arg `()` or one-arg `(_)` methods. The method is only invoked when `Set()` is explicitly called.
 
@@ -292,14 +295,13 @@ Both `action` and `w` (write-only) prevent reading the variable's value and excl
 
 | Access | Valid Path Endings | Invalid Path Endings |
 |--------|-------------------|---------------------|
-| `rw`   | fields, indices | `()`, `(_)` |
+| `rw`   | fields, indices, `()` | `(_)` |
 | `r`    | fields, indices, `()` | `(_)` |
 | `w`    | fields, indices, `(_)` | `()` |
 | `action` | `()`, `(_)` | (none) |
 
-- `rw` is a union of `r` and `w`, so it inherits restrictions from both: no `()` (from `w`) and no `(_)` (from `r`)
 - Paths ending in `(_)` require `access: "w"` or `access: "action"`
-- Paths ending in `()` require `access: "r"` or `access: "action"`
+- Paths ending in `()` are allowed with `rw`, `r`, or `action` access
 - The difference between `w` and `action` for `(_)` paths: `w` computes the initial value (navigates to the method's receiver), while `action` skips this
 
 **Change Detection:**
