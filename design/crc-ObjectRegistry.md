@@ -1,5 +1,6 @@
 # ObjectRegistry
 **Source Spec:** main.md, api.md, value-json.md
+**Requirements:** R25, R26, R27, R28, R29, R34
 
 ## Responsibilities
 

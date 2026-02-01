@@ -159,6 +159,60 @@ func NewTracker() *Tracker {
 	return t
 }
 
+type VariableErrorType int64
+
+const (
+	NoError VariableErrorType = iota
+	PathError
+	NotFound
+	BadSetterCall
+	BadAccess
+	BadIndex
+	BadReference
+	BadParent
+	BadCall
+	NilPath
+)
+
+func (e VariableErrorType) String() string {
+	return [...]string{
+		"NoError",
+		"PathError",
+		"NotFound",
+		"BadSetterCall",
+		"BadAccess",
+		"BadIndex",
+		"BadReference",
+		"BadParent",
+		"BadCall",
+		"NilPath",
+	}[e]
+}
+
+type VariableError struct {
+	ErrorType VariableErrorType
+	Message   string
+	Cause     error
+}
+
+func verror(typ VariableErrorType, msg string, args ...any) *VariableError {
+	var cause error
+	for _, e := range args {
+		if c, ok := e.(error); ok {
+			cause = c
+		}
+	}
+	args = append(append(make([]any, 0, len(args)+1), typ.String()), args...)
+	return &VariableError{ErrorType: typ, Message: fmt.Sprintf("%s error: "+msg, args...), Cause: cause}
+}
+
+func (v *VariableError) Error() string {
+	if v.Cause == nil {
+		return v.Message
+	}
+	return fmt.Sprintf("%s, Cause: %s", v.Message, v.Cause)
+}
+
 // Variable is a tracked variable.
 // CRC: crc-Variable.md
 // Spec: main.md, api.md, resolver.md
@@ -176,6 +230,7 @@ type Variable struct {
 	ValuePriority      Priority // priority of the value
 	WrapperValue       any      // wrapper object for child navigation (optional)
 	WrapperJSON        any      // serialized WrapperValue
+	Error              error    // error from last get or nil if none
 
 	tracker *Tracker
 }
@@ -388,7 +443,7 @@ func getMethodName(elem any) string {
 func validatePath(path []any) error {
 	for i, elem := range path {
 		if isSetterCall(elem) && i != len(path)-1 {
-			return fmt.Errorf("setter call %q must be at end of path", elem)
+			return verror(BadSetterCall, "setter call %q must be at end of path", elem)
 		}
 	}
 	return nil
@@ -410,7 +465,7 @@ func validateAccessPath(access string, path []any) error {
 	if isGetterCall(lastElem) {
 		// () paths require access "rw", "r", or "action" (not "w")
 		if access == "w" {
-			return fmt.Errorf("path ending in %q requires access \"rw\", \"r\", or \"action\", not %q", lastElem, access)
+			return verror(BadAccess, "path ending in %q requires access \"rw\", \"r\", or \"action\", not %q", lastElem, access)
 		}
 	}
 
@@ -418,7 +473,7 @@ func validateAccessPath(access string, path []any) error {
 	if isSetterCall(lastElem) {
 		// (_) paths require access "w" or "action" (not "r" or "rw")
 		if access == "r" || access == "rw" {
-			return fmt.Errorf("path ending in %q requires access \"w\" or \"action\", not %q", lastElem, access)
+			return verror(BadAccess, "path ending in %q requires access \"w\" or \"action\", not %q", lastElem, access)
 		}
 	}
 
@@ -428,16 +483,16 @@ func validateAccessPath(access string, path []any) error {
 // parseInt parses a string as a non-negative integer.
 func parseInt(s string) (int, error) {
 	if s == "" {
-		return 0, fmt.Errorf("empty string")
+		return 0, verror(BadIndex, "empty string")
 	}
 	// Check for valid integer: digits only, no leading zeros (except "0")
 	if s[0] == '0' && len(s) > 1 {
-		return 0, fmt.Errorf("leading zero")
+		return 0, verror(BadIndex, "leading zero")
 	}
 	n := 0
 	for _, c := range s {
 		if c < '0' || c > '9' {
-			return 0, fmt.Errorf("not an integer")
+			return 0, verror(BadIndex, "not an integer")
 		}
 		n = n*10 + int(c-'0')
 	}
@@ -499,6 +554,9 @@ func (t *Tracker) DestroyVariable(id int64) {
 func (t *Tracker) DetectChanges() bool {
 	// Perform depth-first traversal starting from root variables
 	changed := false
+	for _, v := range t.variables {
+		v.Error = nil
+	}
 	for rootID := range t.rootIDs {
 		changed = t.checkVariable(rootID) || changed
 	}
@@ -933,7 +991,7 @@ func (t *Tracker) resolveObj(value any) (any, error) {
 			if ptr := t.idToPtr[int64(f)]; ptr != 0 {
 				return t.ptrToEntry[ptr].ptr.Value(), nil
 			} else {
-				return nil, fmt.Errorf("Bad object reference: %d", int64(f))
+				return nil, verror(BadReference, "Bad object reference: %d", int64(f))
 			}
 		}
 	}
@@ -944,7 +1002,7 @@ func (t *Tracker) resolveObj(value any) (any, error) {
 // Sequence: seq-get-value.md
 func (t *Tracker) Get(obj any, pathElement any) (any, error) {
 	if obj == nil {
-		return nil, fmt.Errorf("cannot navigate nil value")
+		return nil, verror(NilPath, "cannot navigate nil value")
 	}
 
 	rv := reflect.ValueOf(obj)
@@ -952,7 +1010,7 @@ func (t *Tracker) Get(obj any, pathElement any) (any, error) {
 	// Dereference pointers
 	for rv.Kind() == reflect.Pointer || rv.Kind() == reflect.UnsafePointer {
 		if rv.IsNil() {
-			return nil, fmt.Errorf("cannot navigate nil pointer")
+			return nil, verror(NilPath, "cannot navigate nil pointer")
 		}
 		rv = rv.Elem()
 	}
@@ -963,7 +1021,7 @@ func (t *Tracker) Get(obj any, pathElement any) (any, error) {
 	case int:
 		return t.GetByIndex(rv, pe)
 	default:
-		return nil, fmt.Errorf("unsupported path element type: %T", pathElement)
+		return nil, verror(PathError, "unsupported path element type: %T", pathElement)
 	}
 }
 
@@ -972,26 +1030,26 @@ func (t *Tracker) GetByString(rv reflect.Value, name string) (any, error) {
 	case reflect.Struct:
 		field := rv.FieldByName(name)
 		if !field.IsValid() {
-			return nil, fmt.Errorf("field %q not found", name)
+			return nil, verror(PathError, "field %q not found", name)
 		}
 		if !field.CanInterface() {
-			return nil, fmt.Errorf("field %q is unexported", name)
+			return nil, verror(PathError, "field %q is unexported", name)
 		}
 		return field.Interface(), nil
 
 	case reflect.Map:
 		key := reflect.ValueOf(name)
 		if !key.Type().AssignableTo(rv.Type().Key()) {
-			return nil, fmt.Errorf("key type mismatch")
+			return nil, verror(PathError, "key type mismatch")
 		}
 		val := rv.MapIndex(key)
 		if !val.IsValid() {
-			return nil, fmt.Errorf("key %q not found", name)
+			return nil, verror(PathError, "key %q not found", name)
 		}
 		return val.Interface(), nil
 
 	default:
-		return nil, fmt.Errorf("cannot get property %q from %s", name, rv.Kind())
+		return nil, verror(PathError, "cannot get property %q from %s", name, rv.Kind())
 	}
 }
 
@@ -999,12 +1057,12 @@ func (t *Tracker) GetByIndex(rv reflect.Value, index int) (any, error) {
 	switch rv.Kind() {
 	case reflect.Slice, reflect.Array:
 		if index < 0 || index >= rv.Len() {
-			return nil, fmt.Errorf("index %d out of bounds (len=%d)", index, rv.Len())
+			return nil, verror(BadIndex, "index %d out of bounds (len=%d)", index, rv.Len())
 		}
 		return rv.Index(index).Interface(), nil
 
 	default:
-		return nil, fmt.Errorf("cannot index %s", rv.Kind())
+		return nil, verror(BadIndex, "cannot index %s", rv.Kind())
 	}
 }
 
@@ -1012,7 +1070,7 @@ func (t *Tracker) GetByIndex(rv reflect.Value, index int) (any, error) {
 // Sequence: seq-get-value.md
 func (t *Tracker) Call(obj any, methodName string) (any, error) {
 	if obj == nil {
-		return nil, fmt.Errorf("cannot call method on nil value")
+		return nil, verror(BadCall, "cannot call method on nil value")
 	}
 
 	rv := reflect.ValueOf(obj)
@@ -1020,7 +1078,7 @@ func (t *Tracker) Call(obj any, methodName string) (any, error) {
 	// Dereference pointers
 	for rv.Kind() == reflect.Pointer || rv.Kind() == reflect.UnsafePointer {
 		if rv.IsNil() {
-			return nil, fmt.Errorf("cannot call method on nil pointer")
+			return nil, verror(BadCall, "cannot call method on nil pointer")
 		}
 		rv = rv.Elem()
 	}
@@ -1035,16 +1093,16 @@ func (t *Tracker) Call(obj any, methodName string) (any, error) {
 	}
 
 	if !method.IsValid() {
-		return nil, fmt.Errorf("method %q not found", methodName)
+		return nil, verror(BadCall, "method %q not found", methodName)
 	}
 
 	mt := method.Type()
 	// Allow variadic methods (NumIn=1 but IsVariadic) to be called with zero args
 	if mt.NumIn() != 0 && !mt.IsVariadic() {
-		return nil, fmt.Errorf("method %q requires arguments (use CallWith)", methodName)
+		return nil, verror(BadCall, "method %q requires arguments (use CallWith)", methodName)
 	}
 	if mt.NumOut() == 0 {
-		return nil, fmt.Errorf("method %q returns no values", methodName)
+		return nil, verror(BadCall, "method %q returns no values", methodName)
 	}
 
 	results := method.Call(nil)
@@ -1055,7 +1113,7 @@ func (t *Tracker) Call(obj any, methodName string) (any, error) {
 // Sequence: seq-set-value.md
 func (t *Tracker) CallWith(obj any, methodName string, value any) error {
 	if obj == nil {
-		return fmt.Errorf("cannot call method on nil value")
+		return verror(BadCall, "cannot call method on nil value")
 	}
 
 	rv := reflect.ValueOf(obj)
@@ -1063,7 +1121,7 @@ func (t *Tracker) CallWith(obj any, methodName string, value any) error {
 	// Dereference pointers
 	for rv.Kind() == reflect.Pointer || rv.Kind() == reflect.UnsafePointer {
 		if rv.IsNil() {
-			return fmt.Errorf("cannot call method on nil pointer")
+			return verror(BadCall, "cannot call method on nil pointer")
 		}
 		rv = rv.Elem()
 	}
@@ -1078,7 +1136,7 @@ func (t *Tracker) CallWith(obj any, methodName string, value any) error {
 	}
 
 	if !method.IsValid() {
-		return fmt.Errorf("method %q not found", methodName)
+		return verror(BadCall, "method %q not found", methodName)
 	}
 
 	mt := method.Type()
@@ -1087,11 +1145,11 @@ func (t *Tracker) CallWith(obj any, methodName string, value any) error {
 	// Handle variadic methods: pass the value directly
 	if mt.IsVariadic() {
 		if mt.NumIn() != 1 {
-			return fmt.Errorf("method %q must be variadic with one parameter", methodName)
+			return verror(BadCall, "method %q must be variadic with one parameter", methodName)
 		}
 		elemType := mt.In(0).Elem()
 		if !argVal.Type().AssignableTo(elemType) {
-			return fmt.Errorf("argument type mismatch: cannot pass %s to variadic %s", argVal.Type(), elemType)
+			return verror(BadCall, "argument type mismatch: cannot pass %s to variadic %s", argVal.Type(), elemType)
 		}
 		method.Call([]reflect.Value{argVal})
 		return nil
@@ -1099,11 +1157,11 @@ func (t *Tracker) CallWith(obj any, methodName string, value any) error {
 
 	// Regular one-arg method
 	if mt.NumIn() != 1 {
-		return fmt.Errorf("method %q must take exactly one argument", methodName)
+		return verror(BadCall, "method %q must take exactly one argument", methodName)
 	}
 	argType := mt.In(0)
 	if !argVal.Type().AssignableTo(argType) {
-		return fmt.Errorf("argument type mismatch: cannot pass %s to %s", argVal.Type(), argType)
+		return verror(BadCall, "argument type mismatch: cannot pass %s to %s", argVal.Type(), argType)
 	}
 
 	method.Call([]reflect.Value{argVal})
@@ -1138,7 +1196,7 @@ func (t *Tracker) ConvertToValueJSON(tracker *Tracker, value any) any {
 // Sequence: seq-set-value.md
 func (t *Tracker) Set(obj any, pathElement any, value any) error {
 	if obj == nil {
-		return fmt.Errorf("cannot set on nil value")
+		return verror(NilPath, "cannot set on nil value")
 	}
 
 	rv := reflect.ValueOf(obj)
@@ -1154,7 +1212,7 @@ func (t *Tracker) Set(obj any, pathElement any, value any) error {
 	case int:
 		return t.setByIndex(rv, pe, value)
 	default:
-		return fmt.Errorf("unsupported path element type: %T", pathElement)
+		return verror(PathError, "unsupported path element type: %T", pathElement)
 	}
 }
 
@@ -1163,14 +1221,14 @@ func (t *Tracker) setByString(rv reflect.Value, name string, value any) error {
 	case reflect.Struct:
 		field := rv.FieldByName(name)
 		if !field.IsValid() {
-			return fmt.Errorf("field %q not found", name)
+			return verror(PathError, "field %q not found", name)
 		}
 		if !field.CanSet() {
-			return fmt.Errorf("field %q is not settable", name)
+			return verror(PathError, "field %q is not settable", name)
 		}
 		val := reflect.ValueOf(value)
 		if !val.Type().AssignableTo(field.Type()) {
-			return fmt.Errorf("type mismatch: cannot assign %s to %s", val.Type(), field.Type())
+			return verror(PathError, "type mismatch: cannot assign %s to %s", val.Type(), field.Type())
 		}
 		field.Set(val)
 		return nil
@@ -1178,17 +1236,17 @@ func (t *Tracker) setByString(rv reflect.Value, name string, value any) error {
 	case reflect.Map:
 		key := reflect.ValueOf(name)
 		if !key.Type().AssignableTo(rv.Type().Key()) {
-			return fmt.Errorf("key type mismatch")
+			return verror(PathError, "key type mismatch")
 		}
 		val := reflect.ValueOf(value)
 		if !val.Type().AssignableTo(rv.Type().Elem()) {
-			return fmt.Errorf("value type mismatch")
+			return verror(PathError, "value type mismatch")
 		}
 		rv.SetMapIndex(key, val)
 		return nil
 
 	default:
-		return fmt.Errorf("cannot set property %q on %s", name, rv.Kind())
+		return verror(PathError, "cannot set property %q on %s", name, rv.Kind())
 	}
 }
 
@@ -1196,37 +1254,47 @@ func (t *Tracker) setByIndex(rv reflect.Value, index int, value any) error {
 	switch rv.Kind() {
 	case reflect.Slice, reflect.Array:
 		if index < 0 || index >= rv.Len() {
-			return fmt.Errorf("index %d out of bounds (len=%d)", index, rv.Len())
+			return verror(BadIndex, "index %d out of bounds (len=%d)", index, rv.Len())
 		}
 		elem := rv.Index(index)
 		if !elem.CanSet() {
-			return fmt.Errorf("element at index %d is not settable", index)
+			return verror(PathError, "element at index %d is not settable", index)
 		}
 		val := reflect.ValueOf(value)
 		if !val.Type().AssignableTo(elem.Type()) {
-			return fmt.Errorf("type mismatch: cannot assign %s to %s", val.Type(), elem.Type())
+			return verror(PathError, "type mismatch: cannot assign %s to %s", val.Type(), elem.Type())
 		}
 		elem.Set(val)
 		return nil
 
 	default:
-		return fmt.Errorf("cannot index %s", rv.Kind())
+		return verror(PathError, "cannot index %s", rv.Kind())
 	}
 }
 
 // Variable methods
+
+func (v *Variable) verror(typ VariableErrorType, msg string, args ...any) *VariableError {
+	e := verror(typ, msg, args...)
+	v.Error = e
+	return e
+}
+
+func (v *Variable) nilerror(i int) *VariableError {
+	return verror(NilPath, "Nil path %s(nil!).%s", pathString(v.Path[:i]), pathString(v.Path[i:]))
+}
 
 // Get gets the variable's value by navigating from the parent's value using the path.
 // Sequence: seq-get-value.md
 func (v *Variable) Get() (any, error) {
 	// Check access - non-readable variables (write-only or action) cannot be read
 	if !v.IsReadable() {
-		return nil, fmt.Errorf("cannot Get on non-readable variable (access: %q)", v.GetAccess())
+		return nil, v.verror(PathError, "cannot Get on non-readable variable (access: %q)", v.GetAccess())
 	}
 
 	// Check if path ends in setter (_) - write-only path, cannot Get
 	if len(v.Path) > 0 && isSetterCall(v.Path[len(v.Path)-1]) {
-		return nil, fmt.Errorf("cannot Get on write-only path (ends in setter)")
+		return nil, v.verror(PathError, "cannot Get on write-only path (ends in setter)")
 	}
 
 	return v.GetValue()
@@ -1247,17 +1315,19 @@ func (v *Variable) GetValue() (any, error) {
 	// Get parent's value (use parent's NavigationValue which prefers WrapperValue over Value)
 	parent := v.tracker.GetVariable(v.ParentID)
 	if parent == nil {
-		return nil, fmt.Errorf("parent variable %d not found", v.ParentID)
+		return nil, v.verror(NotFound, "parent variable %d not found", v.ParentID)
 	}
 
 	current := parent.NavigationValue()
 
 	// Apply each path element
-	for _, elem := range v.Path {
+	for i, elem := range v.Path {
 		var val any
 		var err error
 
-		if isGetterCall(elem) {
+		if current == nil {
+			err = v.nilerror(i)
+		} else if isGetterCall(elem) {
 			// Use Call for getter methods
 			val, err = v.tracker.Resolver.Call(current, getMethodName(elem))
 		} else {
@@ -1265,6 +1335,7 @@ func (v *Variable) GetValue() (any, error) {
 			val, err = v.tracker.Resolver.Get(current, elem)
 		}
 
+		v.Error = err
 		if err != nil {
 			return nil, err
 		}
@@ -1274,12 +1345,23 @@ func (v *Variable) GetValue() (any, error) {
 	return current, nil
 }
 
+func pathString(path []any) string {
+	b := &strings.Builder{}
+	for _, elem := range path {
+		if b.Len() > 0 {
+			b.WriteString(".")
+		}
+		fmt.Fprint(b, elem)
+	}
+	return b.String()
+}
+
 // Set sets the variable's value by navigating from the parent's value using the path.
 // Sequence: seq-set-value.md
 func (v *Variable) Set(value any) error {
 	// Check access - read-only variables cannot be written
 	if !v.IsWritable() {
-		return fmt.Errorf("cannot Set on read-only variable (access: %q)", v.GetAccess())
+		return v.verror(BadAccess, "cannot Set on read-only variable (access: %q)", v.GetAccess())
 	}
 
 	// Root or no-path variable: update Value directly
@@ -1298,13 +1380,13 @@ func (v *Variable) Set(value any) error {
 	isAction := v.IsAction()
 	isRW := v.GetAccess() == "rw"
 	if isGetterCall(lastElem) && !isAction && !isRW {
-		return fmt.Errorf("cannot Set on read-only path (ends in getter)")
+		return v.verror(BadAccess, "cannot Set on read-only path (ends in getter)")
 	}
 
 	// Get parent's value (use NavigationValue which prefers WrapperValue over Value)
 	parent := v.tracker.GetVariable(v.ParentID)
 	if parent == nil {
-		return fmt.Errorf("parent variable %d not found", v.ParentID)
+		return v.verror(BadParent, "parent variable %d not found", v.ParentID)
 	}
 
 	// Navigate to the parent of the target
@@ -1314,7 +1396,9 @@ func (v *Variable) Set(value any) error {
 		var val any
 		var err error
 
-		if isGetterCall(elem) {
+		if current == nil {
+			err = v.nilerror(i)
+		} else if isGetterCall(elem) {
 			// Use Call for getter methods during navigation
 			val, err = v.tracker.Resolver.Call(current, getMethodName(elem))
 		} else {
@@ -1322,29 +1406,38 @@ func (v *Variable) Set(value any) error {
 			val, err = v.tracker.Resolver.Get(current, elem)
 		}
 
+		v.Error = err
 		if err != nil {
 			return err
 		}
 		current = val
 	}
 
+	if current == nil {
+		v.Error = v.nilerror(len(v.Path) - 2)
+		return v.Error
+	}
 	// Set the value at the last path element
 	if isSetterCall(lastElem) {
 		// Use CallWith for setter methods
-		return v.tracker.Resolver.CallWith(current, getMethodName(lastElem), value)
+		v.Error = v.tracker.Resolver.CallWith(current, getMethodName(lastElem), value)
+		return v.Error
 	}
 	// For rw access with getter paths, call the method with args (variadic call)
 	if isRW && isGetterCall(lastElem) {
-		return v.tracker.Resolver.CallWith(current, getMethodName(lastElem), value)
+		v.Error = v.tracker.Resolver.CallWith(current, getMethodName(lastElem), value)
+		return v.Error
 	}
 	// For action variables with getter paths, call the method for side effects (no args)
 	if isAction && isGetterCall(lastElem) {
 		// Call the method for its side effects, ignoring return value
 		_, err := v.tracker.Resolver.Call(current, getMethodName(lastElem))
+		v.Error = err
 		return err
 	}
 	// Use Set for fields, map keys, indices
 	if err := v.tracker.Resolver.Set(current, lastElem, value); err != nil {
+		v.Error = err
 		return err
 	}
 	v.SetType()

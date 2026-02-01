@@ -1,5 +1,6 @@
 # ObjectRef
 **Source Spec:** value-json.md, api.md
+**Requirements:** R29, R30, R31, R32, R33
 
 ## Responsibilities
 

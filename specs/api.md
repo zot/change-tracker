@@ -52,6 +52,7 @@ type Variable struct {
     Value              any       // cached value for child navigation
     ValueJSON          any       // cached Value JSON for change detection
     ValuePriority      Priority  // priority of the value (from "priority" property)
+    Error              error     // error from last Get/Set operation or nil
 }
 ```
 
@@ -104,6 +105,55 @@ type Change struct {
 ```
 
 A single variable may produce multiple Change entries if its value and properties have different priorities. For example, a variable with a high-priority value change and a low-priority property change would appear twice in the sorted changes slice.
+
+### VariableErrorType
+
+Error type enumeration for structured error handling.
+
+```go
+type VariableErrorType int64
+
+const (
+    NoError       VariableErrorType = iota // No error (zero value)
+    PathError                              // Path navigation failed
+    NotFound                               // Variable or parent not found
+    BadSetterCall                          // Setter call (_) in wrong position
+    BadAccess                              // Access mode violation
+    BadIndex                               // Invalid index
+    BadReference                           // Invalid object reference
+    BadParent                              // Parent variable not found
+    BadCall                                // Method call failed
+    NilPath                                // Nil value in path navigation
+)
+```
+
+### VariableError
+
+Structured error for variable operations.
+
+```go
+type VariableError struct {
+    ErrorType VariableErrorType
+    Message   string
+    Cause     error  // underlying error if any
+}
+```
+
+The `Error` field on `Variable` is set to a `*VariableError` after failed Get/Set operations. This allows callers to inspect error details programmatically:
+
+```go
+_, err := variable.Get()
+if err != nil {
+    if ve, ok := variable.Error.(*VariableError); ok {
+        switch ve.ErrorType {
+        case NilPath:
+            // Handle nil in path
+        case PathError:
+            // Handle path navigation failure
+        }
+    }
+}
+```
 
 ## Tracker Methods
 

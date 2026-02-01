@@ -16,6 +16,7 @@ A Go package providing variable management with automatic change detection. Supp
 ### CRC Cards
 - [x] crc-Tracker.md → `tracker.go`
 - [x] crc-Variable.md → `tracker.go`
+- [x] crc-VariableError.md → `tracker.go`
 - [x] crc-Priority.md → `tracker.go`
 - [x] crc-Change.md → `tracker.go`
 - [x] crc-Resolver.md → `tracker.go`
@@ -23,23 +24,23 @@ A Go package providing variable management with automatic change detection. Supp
 - [x] crc-ObjectRegistry.md → `tracker.go`
 
 ### Sequences
-- [x] seq-create-variable.md → `tracker.go:CreateVariable`
-- [x] seq-destroy-variable.md → `tracker.go:DestroyVariable`
-- [x] seq-detect-changes.md → `tracker.go:DetectChanges`
-- [x] seq-get-value.md → `tracker.go:Variable.Get`
-- [x] seq-set-value.md → `tracker.go:Variable.Set`
-- [x] seq-set-property.md → `tracker.go:Variable.SetProperty`
-- [x] seq-to-value-json.md → `tracker.go:ToValueJSON`
+- [x] seq-create-variable.md → `tracker.go`
+- [x] seq-destroy-variable.md → `tracker.go`
+- [x] seq-detect-changes.md → `tracker.go`
+- [x] seq-get-value.md → `tracker.go`
+- [x] seq-set-value.md → `tracker.go`
+- [x] seq-set-property.md → `tracker.go`
+- [x] seq-to-value-json.md → `tracker.go`
 
 ### Test Designs
-- [x] test-Tracker.md → `tracker_test.go`
-- [x] test-Variable.md → `tracker_test.go`
-- [x] test-Priority.md → `tracker_test.go`
-- [x] test-Change.md → `tracker_test.go`
-- [x] test-Resolver.md → `tracker_test.go`
-- [x] test-ObjectRegistry.md → `tracker_test.go`
-- [x] test-ValueJSON.md → `tracker_test.go`
-- [x] test-Wrapper.md → `tracker_test.go`
+- [x] test-Tracker.md
+- [x] test-Variable.md
+- [x] test-Priority.md
+- [x] test-Change.md
+- [x] test-Resolver.md
+- [x] test-ObjectRegistry.md
+- [x] test-ValueJSON.md
+- [x] test-Wrapper.md
 
 ## Gaps
 
@@ -51,4 +52,4 @@ A Go package providing variable management with automatic change detection. Supp
   - [ ] DetectChanges (tree traversal)
   - [ ] ToValueJSON
   - [ ] Call/CallWith reflection
-- [ ] O2: Typed errors (ErrWriteOnly, ErrReadOnly, ErrPathNotFound)
+- [x] O2: Typed errors (VariableError with VariableErrorType enum)

@@ -1,5 +1,6 @@
 # Variable
 **Source Spec:** main.md, api.md, resolver.md
+**Requirements:** R7, R8, R9, R10, R11, R12, R13, R14, R15, R16, R17, R18, R19, R20, R42, R43, R44, R45, R63, R64, R65, R66, R67, R68, R69
 
 ## Responsibilities
 
@@ -17,6 +18,7 @@
 - ValuePriority: Priority - priority of the value (set via "priority" property)
 - WrapperValue: any - optional wrapper object for child navigation (created via Resolver.CreateWrapper when "wrapper" property is set)
 - WrapperJSON: any - serialized WrapperValue (ToValueJSON)
+- Error: error - error from last Get/Set operation or nil
 - tracker: *Tracker - reference to owning tracker (for resolver access)
 
 ### Does
@@ -42,6 +44,7 @@
 - Tracker: uses tracker's resolver for path navigation, references parent variables
 - Resolver: indirectly via tracker for Get/Set operations
 - Priority: uses Priority type for ValuePriority and PropertyPriorities
+- VariableError: stores structured errors in Error field
 
 ## Sequences
 - seq-get-value.md: getting variable's value (access check: error if write-only or action)

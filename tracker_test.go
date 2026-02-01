@@ -1,4 +1,3 @@
-// Test Design: test-Tracker.md, test-Variable.md, test-Resolver.md, test-ObjectRegistry.md, test-ValueJSON.md, test-Priority.md, test-Change.md
 package changetracker
 
 import (

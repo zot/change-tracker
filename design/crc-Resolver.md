@@ -1,5 +1,6 @@
 # Resolver
 **Source Spec:** resolver.md, api.md
+**Requirements:** R15, R16, R17, R18, R19, R20, R46, R47, R48, R49, R50, R64, R68
 
 ## Responsibilities
 
