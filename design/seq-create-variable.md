@@ -10,18 +10,42 @@
 
 ## Sequence
 
+### CreateVariable (auto-assigned ID)
+```
+Client              Tracker             Variable
+  |                    |                    |
+  |  CreateVariable    |                    |
+  |  (value,parentID,  |                    |
+  |   path,props)      |                    |
+  |------------------->|                    |
+  |                    |                    |
+  |                    | id = nextID        |
+  |                    | nextID++           |
+  |                    |--------.           |
+  |                    |<-------'           |
+  |                    |                    |
+  |                    | CreateVariableWithId(id, ...)
+  |                    |--------.           |
+  |                    |        | (see below)
+  |                    |<-------' *Variable |
+  |                    |                    |
+  |       *Variable    |                    |
+  |<-------------------|                    |
+  |                    |                    |
+```
+
+### CreateVariableWithId (caller-specified ID)
 ```
 Client              Tracker             Variable            Parent          Registry
   |                    |                    |                   |               |
-  |  CreateVariable    |                    |                   |               |
-  |  (value,parentID,  |                    |                   |               |
+  |CreateVariableWithId|                    |                   |               |
+  |  (id,value,parentID|                    |                   |               |
   |   path,props)      |                    |                   |               |
   |------------------->|                    |                   |               |
   |                    |                    |                   |               |
-  |                    | nextID++           |                   |               |
-  |                    |--------.           |                   |               |
-  |                    |        |           |                   |               |
-  |                    |<-------'           |                   |               |
+  |                    |  [if id in use]    |                   |               |
+  |       nil          |  return nil        |                   |               |
+  |<-------------------|                    |                   |               |
   |                    |                    |                   |               |
   |                    | new Variable       |                   |               |
   |                    | (Active = true)    |                   |               |
@@ -111,7 +135,10 @@ Client              Tracker             Variable            Parent          Regi
 ```
 
 ## Notes
-- ID assignment is sequential starting from 1
+- CreateVariable increments nextID, then delegates to CreateVariableWithId
+- CreateVariableWithId returns nil if the ID is already in use
+- CreateVariableWithId does NOT modify nextID - callers vending their own IDs manage collision avoidance
+- ID assignment is sequential starting from 1 (for auto-assigned IDs)
 - Active field is set to true by default
 - For root variables (parentID == 0): adds variable ID to rootIDs set
 - For child variables (parentID != 0): adds variable ID to parent's ChildIDs slice

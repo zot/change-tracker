@@ -42,6 +42,14 @@
 | T2.28 | default (rw) rejects () | (nil, parentID, "Value()", nil) | error returned |
 | T2.29 | default (rw) rejects (_) | (nil, parentID, "SetX(_)", nil) | error returned |
 
+### CreateVariableWithId
+| ID | Scenario | Input | Expected Output |
+|----|----------|-------|-----------------|
+| T2.30 | Caller-specified ID | (5, value, 0, "", nil) | Variable with ID=5 |
+| T2.31 | ID in use | (1, value, 0, "", nil) after another | Returns nil |
+| T2.32 | Does not touch nextID | (10, value, 0, "", nil) | nextID unchanged |
+| T2.33 | CreateVariable increments nextID | Create 2 variables | IDs are 1, 2; nextID becomes 3 |
+
 ### GetVariable
 | ID | Scenario | Input | Expected Output |
 |----|----------|-------|-----------------|

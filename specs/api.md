@@ -189,7 +189,7 @@ func (t *Tracker) CreateVariable(value any, parentID int64, path string, propert
 **Returns:** The created variable with an assigned ID.
 
 **Behavior:**
-1. Assigns a unique ID to the variable (incrementing from 1)
+1. Assigns a unique ID to the variable (incrementing from 1) via `CreateVariableWithId(nextID, ...)`
 2. Sets `Active` to true (default)
 3. Sets `Access` to "rw" (default), or from the `access` property if provided
 4. For root variables (parentID == 0): adds the variable ID to the root variable set
@@ -207,6 +207,32 @@ func (t *Tracker) CreateVariable(value any, parentID int64, path string, propert
 14. Converts cached value to Value JSON and stores for change detection (skipped for `action` access)
 15. If `properties` is nil, initializes an empty map
 16. Stores the variable in the tracker
+
+### CreateVariableWithId
+
+Creates a new variable in the tracker with a caller-specified ID.
+
+```go
+func (t *Tracker) CreateVariableWithId(id int64, value any, parentID int64, path string, properties map[string]string) *Variable
+```
+
+**Parameters:**
+- `id` - The ID to assign to the variable (must not already be in use)
+- `value` - The initial value (used for root variables; ignored for child variables which derive value from path)
+- `parentID` - ID of the parent variable (0 = no parent, making this a root variable)
+- `path` - Path string with optional URL-style query parameters for properties (see below)
+- `properties` - Optional metadata map (can be nil)
+
+**Returns:** The created variable with the specified ID, or nil if the ID is already in use.
+
+**Behavior:**
+- Same as CreateVariable, except:
+  1. Uses the provided `id` instead of auto-assigning one
+  2. Returns nil if the ID is already in use (does not panic or error)
+  3. Does NOT update `nextID` - callers vending their own IDs are responsible for avoiding collisions with auto-assigned IDs
+
+**Use Case:**
+This method allows client code to vend their own IDs, eliminating sequential dependencies when creating variables in parallel or when IDs need to be known before creation.
 
 ### GetVariable
 

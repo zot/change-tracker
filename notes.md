@@ -1,3 +1,9 @@
+allow client code to choose IDS -- add CreateVariableWithId()
+- client will use positive IDs (except for the root variable 1)
+- server will use negative IDs (if any)
+
+
+
 We need to add wrapper support for variables. A wrapper is an object that acts as a stand-in for the variable's value. To manage this:
 - add two wrapper fields to Variable: WrapperValue and WrapperJSON
 - add CreateWrapper(variable) to Resolver

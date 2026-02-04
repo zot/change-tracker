@@ -1,6 +1,6 @@
 # Tracker
 **Source Spec:** main.md, api.md
-**Requirements:** R1, R2, R3, R4, R5, R6, R35, R36, R37, R38, R39, R40, R41, R51, R52, R53, R54, R55, R56, R57, R58
+**Requirements:** R1, R2, R3, R4, R5, R6, R35, R36, R37, R38, R39, R40, R41, R51, R52, R53, R54, R55, R56, R57, R58, R70
 
 ## Responsibilities
 
@@ -16,7 +16,8 @@
 
 ### Does
 - NewTracker(): creates new tracker instance with self as resolver
-- CreateVariable(value, parentID, path, props): creates variable with path+query parsing, assigns ID, caches value, calls ToValueJSON (which auto-registers objects), adds to rootIDs if root, adds ID to parent's ChildIDs if child
+- CreateVariableWithId(id, value, parentID, path, props): creates variable with caller-specified ID; returns nil if ID in use; does NOT touch nextID
+- CreateVariable(value, parentID, path, props): increments nextID, then delegates to CreateVariableWithId
 - GetVariable(id): retrieves variable by ID
 - DestroyVariable(id): removes variable, unregisters object, removes from change tracking, removes from rootIDs if root, removes ID from parent's ChildIDs if child
 - DetectChanges(): performs depth-first tree traversal from root variables, skips inactive variables and their descendants, compares current values to cached ValueJSON, marks value as changed, calls sortChanges, clears internal change records, returns []Change sorted by priority

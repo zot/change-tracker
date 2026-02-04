@@ -350,6 +350,74 @@ func TestCreateVariable_SequentialIDs(t *testing.T) {
 	}
 }
 
+// T2.30: Caller-specified ID
+func TestCreateVariableWithId_CallerSpecifiedID(t *testing.T) {
+	tr := NewTracker()
+	v := tr.CreateVariableWithId(5, "hello", 0, "", nil)
+
+	if v == nil {
+		t.Fatal("expected non-nil variable")
+	}
+	if v.ID != 5 {
+		t.Errorf("expected ID=5, got %d", v.ID)
+	}
+	if v.Value != "hello" {
+		t.Errorf("expected Value=hello, got %v", v.Value)
+	}
+}
+
+// T2.31: ID in use returns nil
+func TestCreateVariableWithId_IDInUse(t *testing.T) {
+	tr := NewTracker()
+	v1 := tr.CreateVariable(1, 0, "", nil)
+	if v1 == nil || v1.ID != 1 {
+		t.Fatal("first variable should have ID=1")
+	}
+
+	v2 := tr.CreateVariableWithId(1, 2, 0, "", nil)
+	if v2 != nil {
+		t.Error("expected nil when ID is in use")
+	}
+
+	// Original variable should still exist
+	if tr.GetVariable(1) != v1 {
+		t.Error("original variable should still exist")
+	}
+}
+
+// T2.32: CreateVariableWithId does NOT touch nextID
+func TestCreateVariableWithId_DoesNotTouchNextID(t *testing.T) {
+	tr := NewTracker()
+	// nextID starts at 1
+	_ = tr.CreateVariableWithId(10, "hello", 0, "", nil)
+
+	// Next auto-assigned ID should still be 1 (CreateVariableWithId doesn't touch nextID)
+	v := tr.CreateVariable("world", 0, "", nil)
+	if v.ID != 1 {
+		t.Errorf("expected nextID to still be 1, got %d", v.ID)
+	}
+}
+
+// T2.33: CreateVariable increments nextID
+func TestCreateVariable_IncrementsNextID(t *testing.T) {
+	tr := NewTracker()
+	v1 := tr.CreateVariable("first", 0, "", nil)
+	v2 := tr.CreateVariable("second", 0, "", nil)
+
+	// Verify sequential IDs
+	if v1.ID != 1 || v2.ID != 2 {
+		t.Errorf("expected IDs 1,2, got %d,%d", v1.ID, v2.ID)
+	}
+
+	// CreateVariableWithId in between shouldn't affect nextID
+	_ = tr.CreateVariableWithId(100, "hundred", 0, "", nil)
+
+	v3 := tr.CreateVariable("third", 0, "", nil)
+	if v3.ID != 3 {
+		t.Errorf("expected ID 3, got %d", v3.ID)
+	}
+}
+
 // T2.9: Nil properties
 func TestCreateVariable_NilProperties(t *testing.T) {
 	tr := NewTracker()

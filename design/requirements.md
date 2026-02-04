@@ -124,3 +124,8 @@
 - **R67:** Wrapper is destroyed when wrapper property cleared, ValueJSON becomes nil, or variable destroyed
 - **R68:** CreateWrapper can return same wrapper (preserves state) or new wrapper (replaces old)
 - **R69:** WrapperValue and WrapperJSON fields store wrapper and its serialized form
+
+## Feature: Client-Specified Variable IDs
+**Source:** specs/api.md
+
+- **R70:** CreateVariableWithId allows caller-specified IDs for parallel variable creation; returns nil if ID in use; CreateVariable delegates to it

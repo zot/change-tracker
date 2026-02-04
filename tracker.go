@@ -242,15 +242,29 @@ func (t *Tracker) ChangeAll(varID int64) {
 	}
 }
 
-// CreateVariable creates a new variable in the tracker.
+// CreateVariable creates a new variable in the tracker with an auto-assigned ID.
 // Sequence: seq-create-variable.md
 func (t *Tracker) CreateVariable(value any, parentID int64, path string, properties map[string]string) *Variable {
+	id := t.nextID
+	t.nextID += 1
+	return t.CreateVariableWithId(id, value, parentID, path, properties)
+}
+
+// CreateVariableWithId creates a new variable in the tracker with a caller-specified ID.
+// Returns nil if the ID is already in use.
+// Sequence: seq-create-variable.md
+func (t *Tracker) CreateVariableWithId(id int64, value any, parentID int64, path string, properties map[string]string) *Variable {
+	// Check if ID is already in use
+	if _, exists := t.variables[id]; exists {
+		return nil
+	}
+
 	if properties == nil {
 		properties = make(map[string]string)
 	}
 
 	v := &Variable{
-		ID:                 t.nextID,
+		ID:                 id,
 		ParentID:           parentID,
 		ChildIDs:           nil, // initialized as nil, will be allocated on first child
 		Active:             true,
@@ -260,7 +274,6 @@ func (t *Tracker) CreateVariable(value any, parentID int64, path string, propert
 		ValuePriority:      PriorityMedium,
 		tracker:            t,
 	}
-	t.nextID++
 
 	// Copy properties from the properties map
 	maps.Copy(v.Properties, properties)
