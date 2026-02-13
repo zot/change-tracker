@@ -29,3 +29,10 @@
 | PR3.4 | No suffix | "name" | baseName="name", priority=Medium |
 | PR3.5 | Multiple colons | "a:b:high" | baseName="a:b", priority=High |
 | PR3.6 | Colon but no priority | "name:other" | baseName="name:other", priority=Medium |
+
+### Priority Computation Order
+| ID | Scenario | Input | Expected Output |
+|----|----------|-------|-----------------|
+| PR4.1 | High checked before medium | high-priority child of medium parent, both change | high child's cached value updated before medium parent's |
+| PR4.2 | Medium checked before low | medium var + low var, both change | medium value updated first |
+| PR4.3 | Mixed tree priorities | tree with high/med/low at various levels | all highs processed, then mediums, then lows |

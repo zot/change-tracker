@@ -1,6 +1,6 @@
 # Tracker
 **Source Spec:** main.md, api.md
-**Requirements:** R1, R2, R3, R4, R5, R6, R35, R36, R37, R38, R39, R40, R41, R51, R52, R53, R54, R55, R56, R57, R58, R70
+**Requirements:** R1, R2, R3, R4, R5, R6, R35, R36, R37, R38, R39, R40, R41, R51, R52, R53, R54, R55, R56, R57, R58, R70, R71, R72, R73, R74
 
 ## Responsibilities
 
@@ -20,7 +20,10 @@
 - CreateVariable(value, parentID, path, props): increments nextID, then delegates to CreateVariableWithId
 - GetVariable(id): retrieves variable by ID
 - DestroyVariable(id): removes variable, unregisters object, removes from change tracking, removes from rootIDs if root, removes ID from parent's ChildIDs if child
-- DetectChanges(): performs depth-first tree traversal from root variables, skips inactive variables and their descendants, compares current values to cached ValueJSON, marks value as changed, calls sortChanges, clears internal change records, returns []Change sorted by priority
+- DetectChanges(): collects active variables via tree traversal (respecting Active flag), groups by priority, checks in priority order with parent-before-child guarantee via checked set, returns bool
+- collectActiveVariables(id, &high, &med, &low) (internal): recursive tree walk that collects readable variables into priority buckets; skips inactive subtrees; skips non-readable but still collects their children
+- checkWithAncestors(id, checked) (internal): ensures readable ancestors are checked before this variable; uses checked set to prevent double-processing; delegates to checkSingleVariable
+- checkSingleVariable(id) (internal): checks one variable for changes without recursion; gets value, converts to ValueJSON, compares, updates cache if changed
 - sortChanges() (internal): returns []Change sorted by priority (high -> medium -> low), reuses sortedChanges slice
 - recordPropertyChange(varID, propName): records a property change (called by Variable.SetProperty)
 - Variables(): returns all variables

@@ -85,10 +85,16 @@
 | T5.13 | Slice reuse | call twice | same backing array capacity |
 | T5.14 | Split by priority | high value, low property same var | 2 Change entries |
 | T5.15 | Group same priority | 2 props same priority | 1 Change with both props |
-| T5.16 | Tree traversal | multi-level tree | detects all changes via DFS |
+| T5.16 | Graph traversal | multi-level tree | detects all changes |
 | T5.17 | Skip inactive | inactive variable | not detected |
 | T5.18 | Skip descendants | inactive parent | children not detected |
 | T5.19 | Multiple roots | 2 root trees | both traversed |
+| T5.20 | Priority computation order | high child, medium parent | high changes before medium in output |
+| T5.21 | All highs before mediums | 2 high, 2 medium variables | both highs checked before any medium |
+| T5.22 | Non-readable children collected | write-only parent, readable child | child is checked at its priority |
+| T5.23 | Inactive prunes from collection | inactive mid-tree var | descendants not collected or checked |
+| T5.24 | Parent-before-child guarantee | high child, medium parent, parent value changes | child sees fresh parent NavigationValue |
+| T5.25 | Ancestor pulled forward once | grandparent→parent→child all different priorities | each checked exactly once, in ancestor-first order |
 
 ### Variables
 | ID | Scenario | Input | Expected Output |

@@ -135,19 +135,21 @@ The tracker itself implements the resolver interface using Go reflection, suppor
 
 ### Change Detection
 
-Change detection uses tree traversal starting from root variables:
+Change detection uses priority-ordered graph traversal:
 
 1. The tracker maintains a set of root variable IDs (variables with ParentID == 0)
-2. `DetectChanges()` performs a depth-first traversal for each root variable:
-   - For each active variable, convert current value to Value JSON and compare to stored Value JSON
-   - If the variable is inactive, skip it and all its descendants
-   - If active, recursively check all children
+2. `DetectChanges()` collects active variables via tree traversal (respecting Active flag propagation), then checks them in priority order:
+   - **Collection phase**: Walk the tree from roots. Inactive variables prune their entire subtree. Active readable variables are grouped by priority (high, medium, low). Non-readable variables are skipped but their children are still collected.
+   - **Check phase**: Check all high-priority variables first, then all medium, then all low. Before checking any variable, ensure its readable ancestors have been checked first (parent-before-child guarantee). A `checked` set prevents double-processing. For each variable, convert current value to Value JSON and compare to stored Value JSON.
 3. On variable creation, the initial value is converted to Value JSON and stored
 4. After comparison, current Value JSON becomes the new stored Value JSON
-5. Changes are sorted by priority and returned
-6. Internal change records are cleared (but the returned slice remains valid)
+5. `GetChanges()` returns changes sorted by priority and clears internal change records (but the returned slice remains valid)
 
 Each variable stores its last known Value JSON for comparison purposes.
+
+**Priority controls computation order**: High-priority variables are checked (value fetched and compared) before medium-priority variables, which are checked before low-priority variables. This ensures that high-priority changes are detected and their cached values updated before lower-priority variables are processed.
+
+**Parent-before-child guarantee**: Since child variables derive their values from parent `NavigationValue()`, readable ancestors are always checked before their descendants. When a high-priority child has a lower-priority parent, the parent is pulled forward and checked first. The `checked` set ensures each variable is checked at most once.
 
 ### Property Changes
 

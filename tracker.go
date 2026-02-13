@@ -560,18 +560,32 @@ func (t *Tracker) DestroyVariable(id int64) {
 	delete(t.variables, id)
 }
 
-// DetectChanges compares current values to cached ValueJSON using tree traversal,
-// sorts changes by priority, clears internal change records, and returns the sorted changes.
+// DetectChanges collects active variables via tree traversal, then checks them
+// in priority order (high → medium → low).
 // CRC: crc-Tracker.md
 // Sequence: seq-detect-changes.md
 func (t *Tracker) DetectChanges() bool {
-	// Perform depth-first traversal starting from root variables
-	changed := false
 	for _, v := range t.variables {
 		v.Error = nil
 	}
+
+	// Collection phase: gather active readable variables by priority
+	var high, medium, low []int64
 	for rootID := range t.rootIDs {
-		changed = t.checkVariable(rootID) || changed
+		t.collectActiveVariables(rootID, &high, &medium, &low)
+	}
+
+	// Check phase: process in priority order with parent-before-child guarantee
+	checked := make(map[int64]bool)
+	changed := false
+	for _, id := range high {
+		changed = t.checkWithAncestors(id, checked) || changed
+	}
+	for _, id := range medium {
+		changed = t.checkWithAncestors(id, checked) || changed
+	}
+	for _, id := range low {
+		changed = t.checkWithAncestors(id, checked) || changed
 	}
 	return changed
 }
@@ -585,58 +599,79 @@ func (t *Tracker) GetChanges() []Change {
 	return result
 }
 
-// checkVariable recursively checks a variable and its children for changes.
-// If the variable is inactive, it and all its descendants are skipped.
-// If the variable is non-readable (write-only or action), it is skipped but children are still checked.
-func (t *Tracker) checkVariable(id int64) bool {
+// collectActiveVariables walks the tree from a variable, collecting active readable
+// variables into priority buckets. Inactive variables prune their entire subtree.
+// Non-readable variables are skipped but their children are still collected.
+// CRC: crc-Tracker.md
+// Sequence: seq-detect-changes.md
+func (t *Tracker) collectActiveVariables(id int64, high, medium, low *[]int64) {
+	v := t.variables[id]
+	if v == nil || !v.Active {
+		return
+	}
+
+	if v.IsReadable() {
+		switch v.ValuePriority {
+		case PriorityHigh:
+			*high = append(*high, id)
+		case PriorityLow:
+			*low = append(*low, id)
+		default:
+			*medium = append(*medium, id)
+		}
+	}
+
+	for _, childID := range v.ChildIDs {
+		t.collectActiveVariables(childID, high, medium, low)
+	}
+}
+
+// checkWithAncestors ensures readable ancestors are checked before this variable.
+// CRC: crc-Tracker.md
+// Sequence: seq-detect-changes.md
+func (t *Tracker) checkWithAncestors(id int64, checked map[int64]bool) bool {
+	if checked[id] {
+		return false
+	}
+	v := t.variables[id]
+	if v == nil {
+		return false
+	}
+	// Ensure readable parent is checked first
+	changed := false
+	if v.ParentID != 0 {
+		if parent := t.variables[v.ParentID]; parent != nil && parent.Active && parent.IsReadable() {
+			changed = t.checkWithAncestors(v.ParentID, checked) || changed
+		}
+	}
+	checked[id] = true
+	return t.checkSingleVariable(id) || changed
+}
+
+// checkSingleVariable checks one variable for changes without recursion.
+// CRC: crc-Tracker.md
+// Sequence: seq-detect-changes.md
+func (t *Tracker) checkSingleVariable(id int64) bool {
 	v := t.variables[id]
 	if v == nil {
 		return false
 	}
 
-	// If inactive, skip this variable and all its descendants
-	if !v.Active {
+	currentValue, err := v.GetValue()
+	if err != nil {
 		return false
 	}
 
-	changed := false
-
-	// If non-readable (write-only or action), skip this variable but continue to children
-	// (non-readable variables cannot be read, so we can't detect their value changes)
-	if !v.IsReadable() {
-		// Recursively check children even though this variable is non-readable
-		for _, childID := range v.ChildIDs {
-			changed = t.checkVariable(childID) || changed
-		}
-		return changed
+	currentJSON := t.ToValueJSON(currentValue)
+	if !jsonEqual(v.ValueJSON, currentJSON) {
+		t.valueChanges[v.ID] = true
+		v.Value = currentValue
+		v.ValueJSON = currentJSON
+		v.updateWrapper()
+		v.SetType()
+		return true
 	}
-
-	// Get current value (use GetValue to bypass access checks - we've already verified readable above)
-	currentValue, err := v.GetValue()
-	if err == nil {
-		// Convert to Value JSON
-		currentJSON := t.ToValueJSON(currentValue)
-
-		// Compare with cached ValueJSON
-		if !jsonEqual(v.ValueJSON, currentJSON) {
-			changed = true
-			t.valueChanges[v.ID] = true
-
-			// Update cached values
-			v.Value = currentValue
-			v.ValueJSON = currentJSON
-
-			// Update wrapper after ValueJSON is updated
-			v.updateWrapper()
-			v.SetType()
-		}
-	}
-
-	// Recursively check all children
-	for _, childID := range v.ChildIDs {
-		changed = t.checkVariable(childID) || changed
-	}
-	return changed
+	return false
 }
 
 // jsonEqual compares two Value JSON values for equality.

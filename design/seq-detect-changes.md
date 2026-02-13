@@ -3,7 +3,7 @@
 
 ## Participants
 - Client: caller triggering change detection
-- Tracker: orchestrates change detection via tree traversal
+- Tracker: orchestrates change detection via priority-ordered graph traversal
 - Variable: each tracked variable
 - Resolver: navigates to current values
 - Change: change record data structure
@@ -16,27 +16,60 @@ Client              Tracker             Variable            Resolver        Chan
   |  DetectChanges()   |                    |                   |              |
   |------------------->|                    |                   |              |
   |                    |                    |                   |              |
+  |                    |  [clear all Variable.Error to nil]     |              |
+  |                    |                    |                   |              |
+  |                    |  === COLLECTION PHASE ===              |              |
   |                    |  [for each rootID in rootIDs]          |              |
   |                    |                    |                   |              |
-  |                    | checkVariable(id)  |                   |              |
-  |                    | (recursive DFS)    |                   |              |
+  |                    | collectActive(id,  |                   |              |
+  |                    |   &hi, &med, &lo)  |                   |              |
   |                    |--------.           |                   |              |
   |                    |        |           |                   |              |
   |                    |        |    [if v.Active == false]     |              |
   |                    |        |    skip variable and children |              |
   |                    |        |    return                     |              |
   |                    |        |           |                   |              |
-  |                    |        |    [if v.Access == "w" or "action"]          |
-  |                    |        |    skip variable (not readable)              |
-  |                    |        |    continue to children       |              |
+  |                    |        |    [if v.IsReadable()]        |              |
+  |                    |        |    append to hi/med/lo        |              |
+  |                    |        |    by v.ValuePriority         |              |
   |                    |        |           |                   |              |
-  |                    |        |    [if v.Active == true && v.Access is "r" or "rw"]
+  |                    |        |  [for each childID in v.ChildIDs]            |
+  |                    |        | collectActive(childID,        |              |
+  |                    |        |   &hi, &med, &lo)             |              |
+  |                    |        |    (recursive)                |              |
+  |                    |        |--------.  |                   |              |
+  |                    |        |<-------'  |                   |              |
   |                    |        |           |                   |              |
-  |                    |        | Get()     |                   |              |
+  |                    |<-------'           |                   |              |
+  |                    |                    |                   |              |
+  |                    |  === CHECK PHASE (priority order) ===  |              |
+  |                    |  [init checked set]                    |              |
+  |                    |  [for each group: hi, med, lo]         |              |
+  |                    |  [for each id in group]                |              |
+  |                    |                    |                   |              |
+  |                    | checkWithAncestors |                   |              |
+  |                    | (id, checked)      |                   |              |
+  |                    |--------.           |                   |              |
+  |                    |        |           |                   |              |
+  |                    |        |    [if checked[id]: skip]     |              |
+  |                    |        |           |                   |              |
+  |                    |        |    [if parent readable        |              |
+  |                    |        |     && !checked[parentID]]    |              |
+  |                    |        | checkWithAncestors            |              |
+  |                    |        | (parentID, checked)           |              |
+  |                    |        |--------.  |                   |              |
+  |                    |        |<-------'  |                   |              |
+  |                    |        |           |                   |              |
+  |                    |        | checked[id] = true            |              |
+  |                    |        |           |                   |              |
+  |                    | checkSingle(id)    |                   |              |
+  |                    |--------.           |                   |              |
+  |                    |        |           |                   |              |
+  |                    |        | GetValue()|                   |              |
   |                    |        |---------->|                   |              |
   |                    |        |           |                   |              |
   |                    |        |           |    [if child var] |              |
-  |                    |        |           | parent.Value      |              |
+  |                    |        |           | parent.NavValue() |              |
   |                    |        |           |-------.           |              |
   |                    |        |           |<------'           |              |
   |                    |        |           |                   |              |
@@ -75,16 +108,15 @@ Client              Tracker             Variable            Resolver        Chan
   |                    |        |           | currentValue      |              |
   |                    |        |---------->|                   |              |
   |                    |        |           |                   |              |
-  |                    |        |  [for each childID in v.ChildIDs]            |
-  |                    |        | checkVariable(childID)        |              |
-  |                    |        | (recursive)                   |              |
-  |                    |        |--------.  |                   |              |
-  |                    |        |<-------'  |                   |              |
-  |                    |        |           |                   |              |
   |                    |<-------'           |                   |              |
   |                    |                    |                   |              |
-  |                    |  [end for each root]                   |              |
+  |                    |  [end for each group]                  |              |
   |                    |                    |                   |              |
+  |     bool           |                    |                   |              |
+  |<-------------------|                    |                   |              |
+  |                    |                    |                   |              |
+  |  GetChanges()      |                    |                   |              |
+  |------------------->|                    |                   |              |
   |                    | sortChanges()      |                   |              |
   |                    | (internal)         |                   |              |
   |                    |--------.           |                   |              |
@@ -104,27 +136,25 @@ Client              Tracker             Variable            Resolver        Chan
 ```
 
 ## Notes
-- Tree traversal: DetectChanges iterates over root variables and performs depth-first traversal
-- Active check: If a variable's Active field is false, it and all its descendants are skipped
-- Access check: If a variable's Access is "w" (write-only) or "action", the variable is skipped but children are still processed
-- Root variables are tracked in rootIDs set for efficient iteration
-- Child variables are found via parent's ChildIDs slice
+- **Two-phase approach**: Collection phase walks the tree to gather active variables; check phase processes them in priority order
+- Collection phase: Tree traversal from roots respects Active flag (inactive parent prunes entire subtree)
+- Collection phase: Non-readable variables (w, action) are skipped but their children are still collected
+- Check phase: All high-priority variables checked first, then medium, then low
+- **Parent-before-child guarantee**: Before checking any variable, checkWithAncestors walks up the parent chain and checks any unchecked readable ancestors first. This ensures NavigationValue() is fresh. A `checked` set prevents double-processing. Lower-priority parents are pulled forward when needed.
 - Comparison uses Value JSON representation (deep equality)
 - Both Value and ValueJSON are updated after comparison
 - Root variables use their cached Value directly (no path navigation)
 - Child variables navigate from parent's cached Value using path
-- DetectChanges only marks value changes (not property changes)
+- DetectChanges only marks value changes (not property changes) and returns bool
 - Property changes are recorded immediately when SetProperty() is called
-- After detection, sortChanges() is called internally to build sorted []Change
-- Internal change records (valueChanges, propertyChanges) are cleared after sorting
-- The sorted changes slice is preserved and returned
-- Returned slice is valid until the next call to DetectChanges()
+- GetChanges() calls sortChanges() to build sorted []Change, then clears internal records
+- Returned slice is valid until the next call to GetChanges()
 
 ### Access vs Active Behavior
-| Condition | Variable Scanned | Children Scanned |
-|-----------|------------------|------------------|
-| Active=true, Access=rw | Yes | Yes |
-| Active=true, Access=r | Yes | Yes |
-| Active=true, Access=w | No | Yes |
-| Active=true, Access=action | No | Yes |
-| Active=false | No | No |
+| Condition | Variable Collected | Variable Checked | Children Collected |
+|-----------|-------------------|------------------|-------------------|
+| Active=true, Access=rw | Yes | Yes | Yes |
+| Active=true, Access=r | Yes | Yes | Yes |
+| Active=true, Access=w | No | No | Yes |
+| Active=true, Access=action | No | No | Yes |
+| Active=false | No | No | No |

@@ -69,12 +69,12 @@
 ## Feature: Change Detection
 **Source:** specs/main.md
 
-- **R35:** DetectChanges() performs depth-first traversal starting from root variables
-- **R36:** For each active variable, convert current value to Value JSON and compare to stored
-- **R37:** Inactive variables and their descendants are skipped
+- **R35:** DetectChanges() collects active variables via tree traversal from roots, then checks them in priority order (high → medium → low)
+- **R36:** For each active readable variable, convert current value to Value JSON and compare to stored
+- **R37:** Inactive variables and their descendants are skipped during collection
 - **R38:** After comparison, current Value JSON becomes new stored Value JSON
-- **R39:** Changes are sorted by priority (high → medium → low) and returned
-- **R40:** Internal change records are cleared after DetectChanges()
+- **R39:** GetChanges() returns changes sorted by priority (high → medium → low) and clears internal change records
+- **R40:** (removed - merged into R39)
 - **R41:** Variable may appear multiple times if changes at different priority levels
 
 ## Feature: Property Changes
@@ -129,3 +129,11 @@
 **Source:** specs/api.md
 
 - **R70:** CreateVariableWithId allows caller-specified IDs for parallel variable creation; returns nil if ID in use; CreateVariable delegates to it
+
+## Feature: Priority-Ordered Computation
+**Source:** specs/main.md
+
+- **R71:** Priority controls computation order: all high-priority variables are checked before any medium-priority, which are checked before any low-priority
+- **R72:** DetectChanges collects active variables via tree traversal (respecting Active flag propagation), then checks them in priority order
+- **R73:** Non-readable variables are skipped during checking but their children are still collected for priority-ordered checking
+- **R74:** Readable ancestors are always checked before their descendants (parent-before-child guarantee); lower-priority parents are pulled forward when a higher-priority child is checked; a checked set prevents double-processing

@@ -2286,6 +2286,337 @@ func TestDetectChanges_MultipleRoots(t *testing.T) {
 }
 
 // ============================================================================
+// Priority Computation Order Tests (test-Tracker.md T5.20-T5.23, test-Priority.md PR4.1-PR4.3)
+// ============================================================================
+
+// T5.20/PR4.1: High-priority child checked before medium-priority parent
+func TestDetectChanges_PriorityComputationOrder(t *testing.T) {
+	tr := NewTracker()
+	data := &struct{ A, B int }{A: 1, B: 2}
+	// Medium-priority root
+	root := tr.CreateVariable(data, 0, "", nil)
+	// High-priority child
+	highChild := tr.CreateVariable(nil, root.ID, "A?priority=high", nil)
+	// Medium-priority child
+	medChild := tr.CreateVariable(nil, root.ID, "B", nil)
+
+	// Clear initial state
+	tr.DetectChanges()
+	tr.GetChanges()
+
+	data.A = 10
+	data.B = 20
+
+	tr.DetectChanges()
+	changes := tr.GetChanges()
+
+	// Verify all changes detected
+	foundHigh := false
+	foundMed := false
+	for _, c := range changes {
+		if c.VariableID == highChild.ID && c.ValueChanged {
+			foundHigh = true
+		}
+		if c.VariableID == medChild.ID && c.ValueChanged {
+			foundMed = true
+		}
+	}
+	if !foundHigh {
+		t.Error("should detect high-priority child change")
+	}
+	if !foundMed {
+		t.Error("should detect medium-priority child change")
+	}
+
+	// Verify high comes before medium in output
+	highIdx := -1
+	medIdx := -1
+	for i, c := range changes {
+		if c.VariableID == highChild.ID {
+			highIdx = i
+		}
+		if c.VariableID == medChild.ID {
+			medIdx = i
+		}
+	}
+	if highIdx >= 0 && medIdx >= 0 && highIdx > medIdx {
+		t.Error("high-priority changes should come before medium-priority changes")
+	}
+}
+
+// T5.21: All highs checked before any mediums
+func TestDetectChanges_AllHighsBeforeMediums(t *testing.T) {
+	tr := NewTracker()
+	data := &struct{ A, B, C, D int }{1, 2, 3, 4}
+	root := tr.CreateVariable(data, 0, "", nil)
+	high1 := tr.CreateVariable(nil, root.ID, "A?priority=high", nil)
+	high2 := tr.CreateVariable(nil, root.ID, "B?priority=high", nil)
+	med1 := tr.CreateVariable(nil, root.ID, "C", nil)
+	med2 := tr.CreateVariable(nil, root.ID, "D", nil)
+
+	tr.DetectChanges()
+	tr.GetChanges()
+
+	data.A = 10
+	data.B = 20
+	data.C = 30
+	data.D = 40
+
+	tr.DetectChanges()
+	changes := tr.GetChanges()
+
+	maxHighIdx := -1
+	minMedIdx := len(changes)
+	for i, c := range changes {
+		if c.VariableID == high1.ID || c.VariableID == high2.ID {
+			if i > maxHighIdx {
+				maxHighIdx = i
+			}
+		}
+		if c.VariableID == med1.ID || c.VariableID == med2.ID {
+			if i < minMedIdx {
+				minMedIdx = i
+			}
+		}
+	}
+	if maxHighIdx >= minMedIdx {
+		t.Errorf("all high-priority changes (last at %d) should come before any medium-priority changes (first at %d)", maxHighIdx, minMedIdx)
+	}
+}
+
+// T5.22: Non-readable parent's children still collected by priority
+func TestDetectChanges_NonReadableChildrenCollected(t *testing.T) {
+	tr := NewTracker()
+	data := &struct{ Value int }{42}
+	root := tr.CreateVariable(data, 0, "", nil)
+	// Write-only variable
+	writeOnly := tr.CreateVariable(nil, root.ID, "Value?access=w", nil)
+	// Readable variable at high priority
+	readable := tr.CreateVariable(nil, root.ID, "Value?priority=high", nil)
+
+	tr.DetectChanges()
+	tr.GetChanges()
+
+	data.Value = 100
+
+	tr.DetectChanges()
+	changes := tr.GetChanges()
+
+	for _, c := range changes {
+		if c.VariableID == writeOnly.ID {
+			t.Error("write-only variable should not be in changes")
+		}
+	}
+
+	found := false
+	for _, c := range changes {
+		if c.VariableID == readable.ID && c.ValueChanged {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("readable sibling should be detected")
+	}
+}
+
+// T5.23: Inactive variable prunes descendants from collection
+func TestDetectChanges_InactivePrunesCollection(t *testing.T) {
+	tr := NewTracker()
+	person := &Person{Name: "Alice", Address: &Address{City: "NYC"}}
+	root := tr.CreateVariable(person, 0, "", nil)
+	addrVar := tr.CreateVariable(nil, root.ID, "Address", nil)
+	cityVar := tr.CreateVariable(nil, addrVar.ID, "City?priority=high", nil)
+
+	tr.DetectChanges()
+	tr.GetChanges()
+
+	addrVar.SetActive(false)
+	person.Address.City = "LA"
+
+	tr.DetectChanges()
+	changes := tr.GetChanges()
+
+	for _, c := range changes {
+		if c.VariableID == cityVar.ID {
+			t.Error("high-priority descendant of inactive parent should not be collected or checked")
+		}
+	}
+}
+
+// T5.24: Parent-before-child guarantee - high child sees fresh parent value
+func TestDetectChanges_ParentBeforeChild(t *testing.T) {
+	tr := NewTracker()
+	type Inner struct{ Value int }
+	type Outer struct{ Inner *Inner }
+	inner1 := &Inner{Value: 1}
+	data := &Outer{Inner: inner1}
+	root := tr.CreateVariable(data, 0, "", nil)
+	// Medium-priority parent navigates to Inner
+	parentVar := tr.CreateVariable(nil, root.ID, "Inner", nil)
+	// High-priority child navigates from parent to Value
+	childVar := tr.CreateVariable(nil, parentVar.ID, "Value?priority=high", nil)
+
+	tr.DetectChanges()
+	tr.GetChanges()
+
+	// Replace the Inner pointer entirely - parent's cached Value becomes stale
+	inner2 := &Inner{Value: 99}
+	data.Inner = inner2
+
+	tr.DetectChanges()
+	changes := tr.GetChanges()
+
+	// Child should see the NEW value (99) because parent was pulled forward
+	found := false
+	for _, c := range changes {
+		if c.VariableID == childVar.ID && c.ValueChanged {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("high-priority child should detect change after parent is pulled forward")
+	}
+	// Verify the child's cached value is the new value
+	if childVar.Value != 99 {
+		t.Errorf("child Value should be 99, got %v", childVar.Value)
+	}
+}
+
+// T5.25: Ancestor chain pulled forward, each checked once
+func TestDetectChanges_AncestorChainPulledForward(t *testing.T) {
+	tr := NewTracker()
+	type C struct{ Val int }
+	type B struct{ C *C }
+	type A struct{ B *B }
+	c1 := &C{Val: 1}
+	b1 := &B{C: c1}
+	data := &A{B: b1}
+	root := tr.CreateVariable(data, 0, "", nil)
+	// Low-priority grandparent
+	gpVar := tr.CreateVariable(nil, root.ID, "B?priority=low", nil)
+	// Medium-priority parent
+	pVar := tr.CreateVariable(nil, gpVar.ID, "C", nil)
+	// High-priority child
+	cVar := tr.CreateVariable(nil, pVar.ID, "Val?priority=high", nil)
+
+	tr.DetectChanges()
+	tr.GetChanges()
+
+	// Replace entire chain
+	c2 := &C{Val: 42}
+	b2 := &B{C: c2}
+	data.B = b2
+
+	tr.DetectChanges()
+	changes := tr.GetChanges()
+
+	// All three should detect changes
+	foundGP := false
+	foundP := false
+	foundC := false
+	for _, c := range changes {
+		if c.VariableID == gpVar.ID && c.ValueChanged {
+			foundGP = true
+		}
+		if c.VariableID == pVar.ID && c.ValueChanged {
+			foundP = true
+		}
+		if c.VariableID == cVar.ID && c.ValueChanged {
+			foundC = true
+		}
+	}
+	if !foundGP {
+		t.Error("grandparent should detect change")
+	}
+	if !foundP {
+		t.Error("parent should detect change")
+	}
+	if !foundC {
+		t.Error("child should detect change")
+	}
+	// Verify child sees the fresh value
+	if cVar.Value != 42 {
+		t.Errorf("child Value should be 42, got %v", cVar.Value)
+	}
+}
+
+// PR4.2: Medium checked before low
+func TestDetectChanges_MediumBeforeLow(t *testing.T) {
+	tr := NewTracker()
+	data := &struct{ A, B int }{1, 2}
+	root := tr.CreateVariable(data, 0, "", nil)
+	medVar := tr.CreateVariable(nil, root.ID, "A", nil)
+	lowVar := tr.CreateVariable(nil, root.ID, "B?priority=low", nil)
+
+	tr.DetectChanges()
+	tr.GetChanges()
+
+	data.A = 10
+	data.B = 20
+
+	tr.DetectChanges()
+	changes := tr.GetChanges()
+
+	medIdx := -1
+	lowIdx := -1
+	for i, c := range changes {
+		if c.VariableID == medVar.ID {
+			medIdx = i
+		}
+		if c.VariableID == lowVar.ID {
+			lowIdx = i
+		}
+	}
+	if medIdx < 0 || lowIdx < 0 {
+		t.Fatal("should detect both changes")
+	}
+	if medIdx > lowIdx {
+		t.Errorf("medium-priority (idx %d) should come before low-priority (idx %d)", medIdx, lowIdx)
+	}
+}
+
+// PR4.3: Mixed tree priorities - all highs, then mediums, then lows
+func TestDetectChanges_MixedTreePriorities(t *testing.T) {
+	tr := NewTracker()
+	data := &struct{ A, B, C int }{1, 2, 3}
+	root := tr.CreateVariable(data, 0, "", nil)
+	highVar := tr.CreateVariable(nil, root.ID, "A?priority=high", nil)
+	medVar := tr.CreateVariable(nil, root.ID, "B", nil)
+	lowVar := tr.CreateVariable(nil, root.ID, "C?priority=low", nil)
+
+	tr.DetectChanges()
+	tr.GetChanges()
+
+	data.A = 10
+	data.B = 20
+	data.C = 30
+
+	tr.DetectChanges()
+	changes := tr.GetChanges()
+
+	highIdx := -1
+	medIdx := -1
+	lowIdx := -1
+	for i, c := range changes {
+		if c.VariableID == highVar.ID {
+			highIdx = i
+		}
+		if c.VariableID == medVar.ID {
+			medIdx = i
+		}
+		if c.VariableID == lowVar.ID {
+			lowIdx = i
+		}
+	}
+	if highIdx < 0 || medIdx < 0 || lowIdx < 0 {
+		t.Fatalf("should detect all changes: high=%d med=%d low=%d", highIdx, medIdx, lowIdx)
+	}
+	if !(highIdx < medIdx && medIdx < lowIdx) {
+		t.Errorf("expected high(%d) < medium(%d) < low(%d)", highIdx, medIdx, lowIdx)
+	}
+}
+
+// ============================================================================
 // Call Tests (test-Resolver.md C1.1-C1.5)
 // ============================================================================
 
