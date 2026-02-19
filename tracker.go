@@ -124,7 +124,8 @@ type propertyChange struct {
 // CRC: crc-Tracker.md
 // Spec: main.md, api.md
 type Tracker struct {
-	Resolver Resolver // defaults to the tracker itself
+	Resolver  Resolver // defaults to the tracker itself
+	DiagLevel int      // diagnostic level (0 = disabled)
 
 	variables map[int64]*Variable
 	nextID    int64
@@ -136,6 +137,9 @@ type Tracker struct {
 
 	// Sorted changes (reused slice)
 	sortedChanges []Change
+
+	// Diagnostics
+	computingVar *Variable // variable currently having its value computed
 
 	// Object registry: maps object pointer to weak entry
 	// CRC: crc-ObjectRegistry.md
@@ -158,6 +162,15 @@ func NewTracker() *Tracker {
 	}
 	t.Resolver = t // default resolver is the tracker itself
 	return t
+}
+
+// Diag adds a diagnostic message to the currently-computing variable's Diags slice.
+// CRC: crc-Tracker.md
+func (t *Tracker) Diag(level int, format string, args ...any) {
+	if t.DiagLevel < level || t.computingVar == nil {
+		return
+	}
+	t.computingVar.Diags = append(t.computingVar.Diags, fmt.Sprintf(format, args...))
 }
 
 type VariableErrorType int64
@@ -234,6 +247,7 @@ type Variable struct {
 	Error              error         // error from last get or nil if none
 	ComputeTime        time.Duration // duration of the most recent value recomputation
 	MaxComputeTime     time.Duration // maximum ComputeTime observed across all recomputations
+	Diags              []string      // diagnostics from most recent value recomputation
 
 	tracker *Tracker
 }
@@ -1369,6 +1383,10 @@ func (v *Variable) GetValue() (any, error) {
 
 	current := parent.NavigationValue()
 
+	// Clear diagnostics and set computing context
+	v.Diags = nil
+	v.tracker.computingVar = v
+
 	// Time only this variable's own path navigation (excludes parent value retrieval)
 	start := time.Now()
 
@@ -1389,11 +1407,13 @@ func (v *Variable) GetValue() (any, error) {
 
 		v.Error = err
 		if err != nil {
+			v.tracker.computingVar = nil
 			return nil, err
 		}
 		current = val
 	}
 
+	v.tracker.computingVar = nil
 	v.ComputeTime = time.Since(start)
 	if v.ComputeTime > v.MaxComputeTime {
 		v.MaxComputeTime = v.ComputeTime
