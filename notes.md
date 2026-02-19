@@ -1,6 +1,7 @@
-I want to add variable diagnostics
+I want to add per-variable diagnostic support
 - tracker has diag level
-- tracker.Diag(level, format, arg...) gets added to the current variable's diag
+- tracker.Diag(level, format, arg...) adds to the current variable's diag list
+  - so the tracker needs to track which variable is currently computing its value
 - diags clear at the start of a recompute
 
 allow client code to choose IDS -- add CreateVariableWithId()

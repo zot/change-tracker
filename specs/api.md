@@ -30,8 +30,10 @@ The change tracker.
 
 ```go
 type Tracker struct {
-    Resolver Resolver  // defaults to the tracker itself
-    // Internal fields for variable storage, ID generation, changed set, object registry, root variable IDs
+    Resolver    Resolver  // defaults to the tracker itself
+    DiagLevel   int       // diagnostic level (0 = disabled)
+    ChangeCount int64     // incremented each time DetectChanges() finds changes
+    // Internal fields for variable storage, ID generation, changed set, object registry, root variable IDs, computingVar
 }
 ```
 
@@ -55,6 +57,8 @@ type Variable struct {
     Error              error          // error from last Get/Set operation or nil
     ComputeTime        time.Duration  // duration of most recent value recomputation
     MaxComputeTime     time.Duration  // maximum ComputeTime across all recomputations
+    ChangeCount        int64          // number of times value changed during DetectChanges
+    Diags              []string       // diagnostics from most recent value recomputation
 }
 ```
 
@@ -166,6 +170,19 @@ Creates a new change tracker.
 ```go
 func NewTracker() *Tracker
 ```
+
+### Diag
+
+Adds a diagnostic message to the currently-computing variable's Diags slice.
+
+```go
+func (t *Tracker) Diag(level int, format string, args ...any)
+```
+
+**Behavior:**
+- If `t.DiagLevel < level`, does nothing
+- If no variable is currently being computed (`computingVar` is nil), does nothing
+- Otherwise, appends `fmt.Sprintf(format, args...)` to `computingVar.Diags`
 
 ### CreateVariable
 

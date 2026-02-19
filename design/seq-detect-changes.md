@@ -100,6 +100,9 @@ Client              Tracker             Variable            Resolver        Chan
   |                    |        |--------.  |                   |              |
   |                    |        |<-------'  |                   |              |
   |                    |        |           |                   |              |
+  |                    |        |           | v.ChangeCount++   |              |
+  |                    |        |---------->|                   |              |
+  |                    |        |           |                   |              |
   |                    |        |           | ValueJSON =       |              |
   |                    |        |           | currentJSON       |              |
   |                    |        |---------->|                   |              |
@@ -111,6 +114,12 @@ Client              Tracker             Variable            Resolver        Chan
   |                    |<-------'           |                   |              |
   |                    |                    |                   |              |
   |                    |  [end for each group]                  |              |
+  |                    |                    |                   |              |
+  |                    |                    |                   |              |
+  |                    |  [if changed]      |                   |              |
+  |                    |  t.ChangeCount++   |                   |              |
+  |                    |--------.           |                   |              |
+  |                    |<-------'           |                   |              |
   |                    |                    |                   |              |
   |     bool           |                    |                   |              |
   |<-------------------|                    |                   |              |

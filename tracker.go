@@ -124,8 +124,9 @@ type propertyChange struct {
 // CRC: crc-Tracker.md
 // Spec: main.md, api.md
 type Tracker struct {
-	Resolver  Resolver // defaults to the tracker itself
-	DiagLevel int      // diagnostic level (0 = disabled)
+	Resolver    Resolver // defaults to the tracker itself
+	DiagLevel   int      // diagnostic level (0 = disabled)
+	ChangeCount int64    // incremented each time DetectChanges() finds changes
 
 	variables map[int64]*Variable
 	nextID    int64
@@ -247,6 +248,7 @@ type Variable struct {
 	Error              error         // error from last get or nil if none
 	ComputeTime        time.Duration // duration of the most recent value recomputation
 	MaxComputeTime     time.Duration // maximum ComputeTime observed across all recomputations
+	ChangeCount        int64         // number of times value changed during DetectChanges
 	Diags              []string      // diagnostics from most recent value recomputation
 
 	tracker *Tracker
@@ -603,6 +605,9 @@ func (t *Tracker) DetectChanges() bool {
 	for _, id := range low {
 		changed = t.checkWithAncestors(id, checked) || changed
 	}
+	if changed || len(t.PropertyChanges) > 0 {
+		t.ChangeCount++
+	}
 	return changed
 }
 
@@ -683,6 +688,7 @@ func (t *Tracker) checkSingleVariable(id int64) bool {
 		t.valueChanges[v.ID] = true
 		v.Value = currentValue
 		v.ValueJSON = currentJSON
+		v.ChangeCount++
 		v.updateWrapper()
 		return true
 	}

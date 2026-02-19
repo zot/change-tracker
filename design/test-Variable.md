@@ -171,6 +171,27 @@ Note: Invalid access/path combinations (e.g., `rw` with `(_)`, `r` with `(_)`, `
 | V13.6 | Timing excludes parent retrieval | child of slow-computing parent | ComputeTime reflects only own path navigation |
 | V13.7 | Root variable timing | root var Get() | ComputeTime == 0 (no path navigation) |
 
+### Variable ChangeCount
+| ID | Scenario | Input | Expected Output |
+|----|----------|-------|-----------------|
+| V15.1 | ChangeCount zero initially | CreateVariable | ChangeCount == 0 |
+| V15.2 | ChangeCount incremented on value change | value changes, DetectChanges | ChangeCount == 1 |
+| V15.3 | ChangeCount not incremented on no change | DetectChanges with no changes | ChangeCount == 0 |
+| V15.4 | ChangeCount accumulates | 2 DetectChanges each with value change | ChangeCount == 2 |
+| V15.5 | ChangeCount not incremented on property-only | SetProperty, DetectChanges (no value change) | ChangeCount == 0 |
+| V15.6 | ChangeCount per-variable | 2 vars, only one changes | changed var ChangeCount==1, other==0 |
+
+### Per-Variable Diagnostics
+| ID | Scenario | Input | Expected Output |
+|----|----------|-------|-----------------|
+| V14.1 | Diags nil initially | CreateVariable (root) | Diags == nil |
+| V14.2 | Diag adds to current variable | DiagLevel=1, Diag(1,...) during Get | Diags contains message |
+| V14.3 | Diag skipped when level too low | DiagLevel=1, Diag(2,...) | Diags empty |
+| V14.4 | Diag skipped when no computing var | DiagLevel=1, Diag(1,...) outside Get | no panic, ignored |
+| V14.5 | Diags cleared on recompute | Get() twice with Diag calls | only latest Diags present |
+| V14.6 | DiagLevel 0 disables all | DiagLevel=0, Diag(1,...) | Diags empty |
+| V14.7 | Diags collected during DetectChanges | DiagLevel=1, DetectChanges | variable Diags populated |
+
 ## Error Scenarios
 
 | ID | Scenario | Input | Expected Error |

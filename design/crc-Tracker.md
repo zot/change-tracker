@@ -1,6 +1,6 @@
 # Tracker
 **Source Spec:** main.md, api.md
-**Requirements:** R1, R2, R3, R4, R5, R6, R35, R36, R37, R38, R39, R40, R41, R51, R52, R53, R54, R55, R56, R57, R58, R70, R71, R72, R73, R74
+**Requirements:** R1, R2, R3, R4, R5, R6, R35, R36, R37, R38, R39, R40, R41, R51, R52, R53, R54, R55, R56, R57, R58, R70, R71, R72, R73, R74, R80, R81, R82, R85, R86, R87
 
 ## Responsibilities
 
@@ -13,6 +13,9 @@
 - sortedChanges: []Change - reusable slice for sortChanges output (flat array, not pointers)
 - objectRegistry: map[uintptr]weakEntry - weak map from object pointers to variable IDs
 - Resolver: Resolver - pluggable resolver for path navigation (defaults to self)
+- ChangeCount: int64 - incremented each time DetectChanges() finds any changes
+- DiagLevel: int - diagnostic level (0 = disabled); controls which Diag() calls are collected
+- computingVar: *Variable - variable currently having its value computed (nil when idle)
 
 ### Does
 - NewTracker(): creates new tracker instance with self as resolver
@@ -38,6 +41,7 @@
 - Set(obj, pathElement, value): resolver implementation using reflection
 - Call(obj, methodName): resolver implementation - invokes zero-arg method via reflection
 - CallWith(obj, methodName, value): resolver implementation - invokes one-arg void method via reflection
+- Diag(level, format, args...): if DiagLevel >= level and computingVar != nil, appends formatted string to computingVar.Diags
 
 ## Collaborators
 - Variable: creates and manages variables

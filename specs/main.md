@@ -34,6 +34,8 @@ The tracker is the central object that:
 - Tracks which variables have changed
 - Has a `Resolver` field (defaults to itself, using Go reflection)
 - Serializes values to Value JSON form
+- Has a `DiagLevel` field (int, default 0) controlling diagnostic output
+- Tracks which variable is currently being computed (`computingVar`)
 
 ### Variables
 
@@ -51,6 +53,7 @@ Each variable has:
 - **ValuePriority** - Priority level for the variable's value
 - **ComputeTime** - Duration of the most recent value recomputation (excludes parent value retrieval, measures only this variable's own path navigation)
 - **MaxComputeTime** - Maximum ComputeTime observed across all recomputations
+- **Diags** - Slice of diagnostic strings collected during the most recent value recomputation (cleared at the start of each recompute)
 
 A variable's value is computed by:
 1. Starting at the parent's cached value
@@ -152,6 +155,23 @@ Each variable stores its last known Value JSON for comparison purposes.
 **Priority controls computation order**: High-priority variables are checked (value fetched and compared) before medium-priority variables, which are checked before low-priority variables. This ensures that high-priority changes are detected and their cached values updated before lower-priority variables are processed.
 
 **Parent-before-child guarantee**: Since child variables derive their values from parent `NavigationValue()`, readable ancestors are always checked before their descendants. When a high-priority child has a lower-priority parent, the parent is pulled forward and checked first. The `checked` set ensures each variable is checked at most once.
+
+### Change Counters
+
+The tracker and variables maintain change counters for monitoring:
+
+- **Tracker.ChangeCount** - An `int64` counter incremented each time `DetectChanges()` finds any changes (i.e., when it returns `true`). Not incremented when no changes are detected.
+- **Variable.ChangeCount** - An `int64` counter on each variable, incremented each time that variable's value actually changes during `DetectChanges()`. Property-only changes do not increment this counter.
+
+### Diagnostics
+
+The tracker provides per-variable diagnostic support for debugging resolver and path navigation behavior:
+
+- **DiagLevel** - An integer on the tracker (default 0) that controls which diagnostics are collected. A level of 0 means diagnostics are disabled.
+- **Diag(level, format, args...)** - A method on the tracker that adds a formatted diagnostic string to the currently-computing variable's `Diags` slice, but only if the tracker's `DiagLevel` is >= the specified level.
+- **computingVar** - The tracker internally tracks which variable is currently having its value computed. This is set before path navigation in `GetValue()` and cleared after.
+- **Diags** - Each variable has a `Diags []string` field. It is cleared at the start of each value recomputation (in `GetValue()`). Diagnostics accumulate during path navigation and resolver calls.
+- If `Diag()` is called when no variable is being computed, the call is ignored.
 
 ### Property Changes
 

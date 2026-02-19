@@ -146,3 +146,21 @@
 - **R77:** ComputeTime measures only this variable's own path navigation, excluding parent value retrieval
 - **R78:** ComputeTime is updated on every value recomputation (Get, DetectChanges)
 - **R79:** MaxComputeTime is updated whenever ComputeTime exceeds the current maximum
+
+## Feature: Per-Variable Diagnostics
+**Source:** specs/main.md
+
+- **R80:** Tracker has DiagLevel field (int, default 0) controlling diagnostic collection
+- **R81:** Tracker has Diag(level, format, args...) method that adds formatted string to currently-computing variable's Diags
+- **R82:** Diag does nothing if DiagLevel < level or no variable is currently being computed
+- **R83:** Variable has Diags field ([]string) collecting diagnostics from most recent value recomputation
+- **R84:** Variable's Diags are cleared at the start of each value recomputation in GetValue()
+- **R85:** Tracker internally tracks which variable is currently being computed (computingVar), set during GetValue() path navigation
+
+## Feature: Change Counters
+**Source:** specs/main.md
+
+- **R86:** Tracker has ChangeCount field (int64) incremented each time DetectChanges() finds any changes
+- **R87:** ChangeCount is not incremented when DetectChanges() finds no changes
+- **R88:** Variable has ChangeCount field (int64) incremented each time the variable's value actually changes during DetectChanges()
+- **R89:** Variable.ChangeCount is not incremented for property-only changes

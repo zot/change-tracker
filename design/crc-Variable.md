@@ -1,6 +1,6 @@
 # Variable
 **Source Spec:** main.md, api.md, resolver.md
-**Requirements:** R7, R8, R9, R10, R11, R12, R13, R14, R15, R16, R17, R18, R19, R20, R42, R43, R44, R45, R63, R64, R65, R66, R67, R68, R69, R75, R76, R77, R78, R79
+**Requirements:** R7, R8, R9, R10, R11, R12, R13, R14, R15, R16, R17, R18, R19, R20, R42, R43, R44, R45, R63, R64, R65, R66, R67, R68, R69, R75, R76, R77, R78, R79, R83, R84, R88, R89
 
 ## Responsibilities
 
@@ -21,6 +21,8 @@
 - Error: error - error from last Get/Set operation or nil
 - ComputeTime: time.Duration - duration of the most recent value recomputation (own path navigation only, excludes parent value retrieval)
 - MaxComputeTime: time.Duration - maximum ComputeTime observed across all recomputations
+- ChangeCount: int64 - number of times value changed during DetectChanges() (not incremented for property-only changes)
+- Diags: []string - diagnostic strings from most recent value recomputation (cleared at start of each recompute)
 - tracker: *Tracker - reference to owning tracker (for resolver access)
 
 ### Does

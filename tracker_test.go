@@ -3748,3 +3748,306 @@ func TestComputeTime_RootIsZero(t *testing.T) {
 		t.Errorf("expected root MaxComputeTime 0, got %v", root.MaxComputeTime)
 	}
 }
+
+// ============================================================================
+// Per-Variable Diagnostics Tests (test-Variable.md V14)
+// Test Design: test-Variable.md
+// ============================================================================
+
+// diagResolver is a resolver that calls Diag() during Get operations
+type diagResolver struct {
+	*Tracker
+}
+
+func (r *diagResolver) Get(obj any, pathElement any) (any, error) {
+	r.Tracker.Diag(1, "resolving %v", pathElement)
+	return r.Tracker.Get(obj, pathElement)
+}
+
+// V14.1: Diags nil initially
+func TestDiag_NilInitially(t *testing.T) {
+	tr := NewTracker()
+	root := tr.CreateVariable(&Person{Name: "Alice"}, 0, "", nil)
+	if root.Diags != nil {
+		t.Errorf("expected Diags nil, got %v", root.Diags)
+	}
+}
+
+// V14.2: Diag adds to current variable
+func TestDiag_AddsToCurrent(t *testing.T) {
+	tr := NewTracker()
+	tr.DiagLevel = 1
+	tr.Resolver = &diagResolver{tr}
+	person := &Person{Name: "Alice"}
+	root := tr.CreateVariable(person, 0, "", nil)
+	child := tr.CreateVariable(nil, root.ID, "Name", nil)
+
+	_, err := child.Get()
+	if err != nil {
+		t.Fatalf("Get() failed: %v", err)
+	}
+	if len(child.Diags) == 0 {
+		t.Fatal("expected Diags to contain messages")
+	}
+	if child.Diags[0] != "resolving Name" {
+		t.Errorf("expected 'resolving Name', got %q", child.Diags[0])
+	}
+}
+
+// V14.3: Diag skipped when level too low
+func TestDiag_SkippedWhenLevelTooLow(t *testing.T) {
+	tr := NewTracker()
+	tr.DiagLevel = 1
+	tr.Resolver = &diagResolver{tr} // diagResolver calls Diag(1, ...)
+	person := &Person{Name: "Alice"}
+	root := tr.CreateVariable(person, 0, "", nil)
+	child := tr.CreateVariable(nil, root.ID, "Name", nil)
+
+	// Now lower DiagLevel so level 1 diags are skipped
+	tr.DiagLevel = 0
+	_, err := child.Get()
+	if err != nil {
+		t.Fatalf("Get() failed: %v", err)
+	}
+	if len(child.Diags) != 0 {
+		t.Errorf("expected no Diags with DiagLevel=0, got %v", child.Diags)
+	}
+}
+
+// V14.4: Diag skipped when no computing var
+func TestDiag_SkippedWhenNoComputingVar(t *testing.T) {
+	tr := NewTracker()
+	tr.DiagLevel = 1
+	// Call Diag outside of any Get() — should not panic
+	tr.Diag(1, "orphan message")
+	// No variable to receive it, so nothing to check except no panic
+}
+
+// V14.5: Diags cleared on recompute
+func TestDiag_ClearedOnRecompute(t *testing.T) {
+	tr := NewTracker()
+	tr.DiagLevel = 1
+	tr.Resolver = &diagResolver{tr}
+	person := &Person{Name: "Alice"}
+	root := tr.CreateVariable(person, 0, "", nil)
+	child := tr.CreateVariable(nil, root.ID, "Name", nil)
+
+	// First Get
+	_, _ = child.Get()
+	firstDiags := child.Diags
+	if len(firstDiags) == 0 {
+		t.Fatal("expected Diags after first Get")
+	}
+
+	// Second Get — Diags should be cleared and repopulated
+	_, _ = child.Get()
+	if len(child.Diags) != len(firstDiags) {
+		t.Errorf("expected same number of diags on second Get, got %d vs %d", len(child.Diags), len(firstDiags))
+	}
+}
+
+// V14.6: DiagLevel 0 disables all
+func TestDiag_LevelZeroDisables(t *testing.T) {
+	tr := NewTracker()
+	tr.DiagLevel = 0 // default
+	tr.Resolver = &diagResolver{tr}
+	person := &Person{Name: "Alice"}
+	root := tr.CreateVariable(person, 0, "", nil)
+	child := tr.CreateVariable(nil, root.ID, "Name", nil)
+
+	_, err := child.Get()
+	if err != nil {
+		t.Fatalf("Get() failed: %v", err)
+	}
+	if len(child.Diags) != 0 {
+		t.Errorf("expected no Diags with DiagLevel=0, got %v", child.Diags)
+	}
+}
+
+// V14.7: Diags collected during DetectChanges
+func TestDiag_CollectedDuringDetectChanges(t *testing.T) {
+	tr := NewTracker()
+	tr.DiagLevel = 1
+	tr.Resolver = &diagResolver{tr}
+	person := &Person{Name: "Alice"}
+	root := tr.CreateVariable(person, 0, "", nil)
+	child := tr.CreateVariable(nil, root.ID, "Name", nil)
+
+	// Change value and detect
+	person.Name = "Bob"
+	tr.DetectChanges()
+
+	if len(child.Diags) == 0 {
+		t.Fatal("expected Diags after DetectChanges")
+	}
+	if child.Diags[0] != "resolving Name" {
+		t.Errorf("expected 'resolving Name', got %q", child.Diags[0])
+	}
+}
+
+// === Change Counter Tests ===
+// Test Design: test-Tracker.md (T11.1-T11.5), test-Variable.md (V15.1-V15.6)
+
+// T11.1: ChangeCount zero initially
+func TestTrackerChangeCountZeroInitially(t *testing.T) {
+	tr := NewTracker()
+	if tr.ChangeCount != 0 {
+		t.Errorf("expected ChangeCount 0, got %d", tr.ChangeCount)
+	}
+}
+
+// T11.2: ChangeCount incremented on changes
+func TestTrackerChangeCountIncrementedOnChanges(t *testing.T) {
+	tr := NewTracker()
+	data := &Person{Name: "Alice"}
+	root := tr.CreateVariable(data, 0, "", nil)
+	tr.CreateVariable(nil, root.ID, "Name", nil)
+
+	data.Name = "Bob"
+	tr.DetectChanges()
+	if tr.ChangeCount != 1 {
+		t.Errorf("expected ChangeCount 1, got %d", tr.ChangeCount)
+	}
+}
+
+// T11.3: ChangeCount not incremented on no changes
+func TestTrackerChangeCountNotIncrementedOnNoChanges(t *testing.T) {
+	tr := NewTracker()
+	data := &Person{Name: "Alice"}
+	root := tr.CreateVariable(data, 0, "", nil)
+	tr.CreateVariable(nil, root.ID, "Name", nil)
+
+	tr.DetectChanges()
+	if tr.ChangeCount != 0 {
+		t.Errorf("expected ChangeCount 0, got %d", tr.ChangeCount)
+	}
+}
+
+// T11.4: ChangeCount accumulates
+func TestTrackerChangeCountAccumulates(t *testing.T) {
+	tr := NewTracker()
+	data := &Person{Name: "Alice"}
+	root := tr.CreateVariable(data, 0, "", nil)
+	tr.CreateVariable(nil, root.ID, "Name", nil)
+
+	data.Name = "Bob"
+	tr.DetectChanges()
+	tr.GetChanges()
+
+	data.Name = "Charlie"
+	tr.DetectChanges()
+	if tr.ChangeCount != 2 {
+		t.Errorf("expected ChangeCount 2, got %d", tr.ChangeCount)
+	}
+}
+
+// T11.5: ChangeCount incremented on property-only changes
+func TestTrackerChangeCountIncrementedOnPropertyOnly(t *testing.T) {
+	tr := NewTracker()
+	data := &Person{Name: "Alice"}
+	root := tr.CreateVariable(data, 0, "", nil)
+	child := tr.CreateVariable(nil, root.ID, "Name", nil)
+
+	child.SetProperty("label", "test")
+	tr.DetectChanges()
+	if tr.ChangeCount != 1 {
+		t.Errorf("expected ChangeCount 1 for property-only change, got %d", tr.ChangeCount)
+	}
+}
+
+// V15.1: Variable ChangeCount zero initially
+func TestVariableChangeCountZeroInitially(t *testing.T) {
+	tr := NewTracker()
+	data := &Person{Name: "Alice"}
+	root := tr.CreateVariable(data, 0, "", nil)
+	child := tr.CreateVariable(nil, root.ID, "Name", nil)
+
+	if root.ChangeCount != 0 {
+		t.Errorf("expected root ChangeCount 0, got %d", root.ChangeCount)
+	}
+	if child.ChangeCount != 0 {
+		t.Errorf("expected child ChangeCount 0, got %d", child.ChangeCount)
+	}
+}
+
+// V15.2: Variable ChangeCount incremented on value change
+func TestVariableChangeCountIncrementedOnValueChange(t *testing.T) {
+	tr := NewTracker()
+	data := &Person{Name: "Alice"}
+	root := tr.CreateVariable(data, 0, "", nil)
+	child := tr.CreateVariable(nil, root.ID, "Name", nil)
+
+	data.Name = "Bob"
+	tr.DetectChanges()
+	if child.ChangeCount != 1 {
+		t.Errorf("expected child ChangeCount 1, got %d", child.ChangeCount)
+	}
+}
+
+// V15.3: Variable ChangeCount not incremented on no change
+func TestVariableChangeCountNotIncrementedOnNoChange(t *testing.T) {
+	tr := NewTracker()
+	data := &Person{Name: "Alice"}
+	root := tr.CreateVariable(data, 0, "", nil)
+	child := tr.CreateVariable(nil, root.ID, "Name", nil)
+
+	tr.DetectChanges()
+	if child.ChangeCount != 0 {
+		t.Errorf("expected child ChangeCount 0, got %d", child.ChangeCount)
+	}
+	_ = root
+}
+
+// V15.4: Variable ChangeCount accumulates
+func TestVariableChangeCountAccumulates(t *testing.T) {
+	tr := NewTracker()
+	data := &Person{Name: "Alice"}
+	root := tr.CreateVariable(data, 0, "", nil)
+	child := tr.CreateVariable(nil, root.ID, "Name", nil)
+
+	data.Name = "Bob"
+	tr.DetectChanges()
+	tr.GetChanges()
+
+	data.Name = "Charlie"
+	tr.DetectChanges()
+	if child.ChangeCount != 2 {
+		t.Errorf("expected child ChangeCount 2, got %d", child.ChangeCount)
+	}
+	_ = root
+}
+
+// V15.5: Variable ChangeCount not incremented on property-only change
+func TestVariableChangeCountNotIncrementedOnPropertyOnly(t *testing.T) {
+	tr := NewTracker()
+	data := &Person{Name: "Alice"}
+	root := tr.CreateVariable(data, 0, "", nil)
+	child := tr.CreateVariable(nil, root.ID, "Name", nil)
+
+	child.SetProperty("label", "test")
+	tr.DetectChanges()
+	if child.ChangeCount != 0 {
+		t.Errorf("expected child ChangeCount 0 for property-only change, got %d", child.ChangeCount)
+	}
+	_ = root
+}
+
+// V15.6: Variable ChangeCount per-variable
+func TestVariableChangeCountPerVariable(t *testing.T) {
+	tr := NewTracker()
+	data := &Person{Name: "Alice", Age: 30}
+	root := tr.CreateVariable(data, 0, "", nil)
+	nameVar := tr.CreateVariable(nil, root.ID, "Name", nil)
+	ageVar := tr.CreateVariable(nil, root.ID, "Age", nil)
+
+	// Only change Name
+	data.Name = "Bob"
+	tr.DetectChanges()
+
+	if nameVar.ChangeCount != 1 {
+		t.Errorf("expected nameVar ChangeCount 1, got %d", nameVar.ChangeCount)
+	}
+	if ageVar.ChangeCount != 0 {
+		t.Errorf("expected ageVar ChangeCount 0, got %d", ageVar.ChangeCount)
+	}
+}

@@ -67,6 +67,15 @@
 | T4.5 | Root removed from rootIDs | destroy root | rootIDs no longer contains ID |
 | T4.6 | Child removed from ChildIDs | destroy child | parent.ChildIDs no longer contains ID |
 
+### Tracker ChangeCount
+| ID | Scenario | Input | Expected Output |
+|----|----------|-------|-----------------|
+| T11.1 | ChangeCount zero initially | NewTracker() | ChangeCount == 0 |
+| T11.2 | ChangeCount incremented on changes | DetectChanges with value change | ChangeCount == 1 |
+| T11.3 | ChangeCount not incremented on no changes | DetectChanges with no changes | ChangeCount == 0 |
+| T11.4 | ChangeCount accumulates | DetectChanges twice with changes each time | ChangeCount == 2 |
+| T11.5 | ChangeCount incremented on property-only changes | SetProperty then DetectChanges | ChangeCount == 1 |
+
 ### DetectChanges
 | ID | Scenario | Input | Expected Output |
 |----|----------|-------|-----------------|
