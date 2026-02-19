@@ -49,6 +49,8 @@ Each variable has:
 - **Value** - Cached value for child navigation
 - **ValueJSON** - Cached Value JSON for change detection
 - **ValuePriority** - Priority level for the variable's value
+- **ComputeTime** - Duration of the most recent value recomputation (excludes parent value retrieval, measures only this variable's own path navigation)
+- **MaxComputeTime** - Maximum ComputeTime observed across all recomputations
 
 A variable's value is computed by:
 1. Starting at the parent's cached value

@@ -43,6 +43,10 @@ Client              Variable            Tracker             Resolver
   |                    |--------.           |                   |
   |                    |<-------'           |                   |
   |                    |                    |                   |
+  |                    | start = time.Now() |                   |
+  |                    |--------.           |                   |
+  |                    |<-------'           |                   |
+  |                    |                    |                   |
   |                    |  [for each elem in Path]               |
   |                    |                    |                   |
   |                    |    [if elem ends with "()"]            |
@@ -64,6 +68,18 @@ Client              Variable            Tracker             Resolver
   |                    |                    |                   |
   |                    |  [end for each]    |                   |
   |                    |                    |                   |
+  |                    | ComputeTime =      |                   |
+  |                    | time.Since(start)  |                   |
+  |                    |--------.           |                   |
+  |                    |<-------'           |                   |
+  |                    |                    |                   |
+  |                    | [if ComputeTime >  |                   |
+  |                    |     MaxComputeTime]|                   |
+  |                    | MaxComputeTime =   |                   |
+  |                    | ComputeTime        |                   |
+  |                    |--------.           |                   |
+  |                    |<-------'           |                   |
+  |                    |                    |                   |
   |                    | Value = val        |                   |
   |                    |--------.           |                   |
   |                    |<-------' (cache)   |                   |
@@ -81,6 +97,8 @@ Client              Variable            Tracker             Resolver
 - Path elements ending in `()` use Call for zero-arg method invocation
 - Other path elements use Get for field/key/index access
 - The result is cached in Variable.Value for child navigation
+- ComputeTime is measured from the start of path navigation to the end (excludes parent value retrieval)
+- MaxComputeTime is updated if ComputeTime exceeds the current maximum
 - Errors propagate if any path element resolution fails
 - Path elements can be strings (field, key, method) or ints (index)
 - Access property is independent of path semantics (both can restrict Get)

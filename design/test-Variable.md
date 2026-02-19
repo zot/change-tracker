@@ -160,6 +160,17 @@ Note: Invalid access/path combinations (e.g., `rw` with `(_)`, `r` with `(_)`, `
 | V7.2 | Populated on child creation | CreateVariable with parent | parent.ChildIDs contains child ID |
 | V7.3 | Removed on destroy | DestroyVariable(child) | parent.ChildIDs no longer contains ID |
 
+### Recomputation Timing
+| ID | Scenario | Input | Expected Output |
+|----|----------|-------|-----------------|
+| V13.1 | ComputeTime zero initially | CreateVariable (root) | ComputeTime == 0 |
+| V13.2 | ComputeTime set after Get | child var Get() | ComputeTime > 0 |
+| V13.3 | MaxComputeTime set after Get | child var Get() | MaxComputeTime == ComputeTime |
+| V13.4 | MaxComputeTime keeps maximum | Get() twice | MaxComputeTime >= both ComputeTimes |
+| V13.5 | ComputeTime updated on DetectChanges | value changes, DetectChanges | ComputeTime updated |
+| V13.6 | Timing excludes parent retrieval | child of slow-computing parent | ComputeTime reflects only own path navigation |
+| V13.7 | Root variable timing | root var Get() | ComputeTime == 0 (no path navigation) |
+
 ## Error Scenarios
 
 | ID | Scenario | Input | Expected Error |

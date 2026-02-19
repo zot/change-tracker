@@ -52,7 +52,9 @@ type Variable struct {
     Value              any       // cached value for child navigation
     ValueJSON          any       // cached Value JSON for change detection
     ValuePriority      Priority  // priority of the value (from "priority" property)
-    Error              error     // error from last Get/Set operation or nil
+    Error              error          // error from last Get/Set operation or nil
+    ComputeTime        time.Duration  // duration of most recent value recomputation
+    MaxComputeTime     time.Duration  // maximum ComputeTime across all recomputations
 }
 ```
 

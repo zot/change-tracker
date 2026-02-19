@@ -1,3 +1,8 @@
+I want to add variable diagnostics
+- tracker has diag level
+- tracker.Diag(level, format, arg...) gets added to the current variable's diag
+- diags clear at the start of a recompute
+
 allow client code to choose IDS -- add CreateVariableWithId()
 - client will use positive IDs (except for the root variable 1)
 - server will use negative IDs (if any)

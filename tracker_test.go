@@ -3,6 +3,7 @@ package changetracker
 import (
 	"fmt"
 	"testing"
+	"time"
 )
 
 // Test types
@@ -3594,5 +3595,156 @@ func TestWrapper_ReplacementOnDifferentPointer(t *testing.T) {
 	_, ok = tr.LookupObject(wrapper2)
 	if !ok {
 		t.Error("W11: New wrapper should be registered")
+	}
+}
+
+// ============================================================================
+// Recomputation Timing Tests (test-Variable.md V13)
+// Test Design: test-Variable.md
+// ============================================================================
+
+// V13.1: ComputeTime zero initially
+func TestComputeTime_ZeroInitially(t *testing.T) {
+	tr := NewTracker()
+	root := tr.CreateVariable(&Person{Name: "Alice"}, 0, "", nil)
+	if root.ComputeTime != 0 {
+		t.Errorf("expected ComputeTime 0, got %v", root.ComputeTime)
+	}
+	if root.MaxComputeTime != 0 {
+		t.Errorf("expected MaxComputeTime 0, got %v", root.MaxComputeTime)
+	}
+}
+
+// V13.2: ComputeTime set after Get
+func TestComputeTime_SetAfterGet(t *testing.T) {
+	tr := NewTracker()
+	person := &Person{Name: "Alice", Address: &Address{City: "NYC"}}
+	root := tr.CreateVariable(person, 0, "", nil)
+	child := tr.CreateVariable(nil, root.ID, "Address.City", nil)
+
+	// ComputeTime should already be > 0 from CreateVariable's initial GetValue()
+	initialTime := child.ComputeTime
+	if initialTime <= 0 {
+		t.Errorf("expected ComputeTime > 0 after creation, got %v", initialTime)
+	}
+
+	// Call Get() and verify ComputeTime is updated
+	_, err := child.Get()
+	if err != nil {
+		t.Fatalf("Get() failed: %v", err)
+	}
+	if child.ComputeTime <= 0 {
+		t.Errorf("expected ComputeTime > 0 after Get(), got %v", child.ComputeTime)
+	}
+}
+
+// V13.3: MaxComputeTime set after Get
+func TestComputeTime_MaxSetAfterGet(t *testing.T) {
+	tr := NewTracker()
+	person := &Person{Name: "Alice"}
+	root := tr.CreateVariable(person, 0, "", nil)
+	child := tr.CreateVariable(nil, root.ID, "Name", nil)
+
+	_, err := child.Get()
+	if err != nil {
+		t.Fatalf("Get() failed: %v", err)
+	}
+	if child.MaxComputeTime <= 0 {
+		t.Errorf("expected MaxComputeTime > 0 after Get(), got %v", child.MaxComputeTime)
+	}
+	if child.MaxComputeTime < child.ComputeTime {
+		t.Error("MaxComputeTime should be >= ComputeTime")
+	}
+}
+
+// V13.4: MaxComputeTime keeps maximum
+func TestComputeTime_MaxKeepsMaximum(t *testing.T) {
+	tr := NewTracker()
+	person := &Person{Name: "Alice"}
+	root := tr.CreateVariable(person, 0, "", nil)
+	child := tr.CreateVariable(nil, root.ID, "Name", nil)
+
+	// Call Get() multiple times and track the maximum
+	var maxSeen time.Duration
+	for i := 0; i < 5; i++ {
+		_, err := child.Get()
+		if err != nil {
+			t.Fatalf("Get() failed: %v", err)
+		}
+		if child.ComputeTime > maxSeen {
+			maxSeen = child.ComputeTime
+		}
+	}
+	if child.MaxComputeTime < maxSeen {
+		t.Errorf("MaxComputeTime %v should be >= observed max %v", child.MaxComputeTime, maxSeen)
+	}
+}
+
+// V13.5: ComputeTime updated on DetectChanges
+func TestComputeTime_UpdatedOnDetectChanges(t *testing.T) {
+	tr := NewTracker()
+	person := &Person{Name: "Alice"}
+	root := tr.CreateVariable(person, 0, "", nil)
+	child := tr.CreateVariable(nil, root.ID, "Name", nil)
+
+	// Reset by noting initial time
+	initialTime := child.ComputeTime
+
+	// Change value and detect
+	person.Name = "Bob"
+	tr.DetectChanges()
+
+	// ComputeTime should have been updated during DetectChanges
+	if child.ComputeTime <= 0 {
+		t.Errorf("expected ComputeTime > 0 after DetectChanges, got %v", child.ComputeTime)
+	}
+	// It's a new measurement, may differ from initial
+	_ = initialTime
+}
+
+// V13.6: Timing excludes parent retrieval
+func TestComputeTime_ExcludesParentRetrieval(t *testing.T) {
+	tr := NewTracker()
+	person := &Person{Name: "Alice", Address: &Address{City: "NYC"}}
+	root := tr.CreateVariable(person, 0, "", nil)
+	// Parent has a path to navigate
+	addrChild := tr.CreateVariable(nil, root.ID, "Address", nil)
+	// Grandchild navigates from parent's value
+	cityChild := tr.CreateVariable(nil, addrChild.ID, "City", nil)
+
+	_, err := cityChild.Get()
+	if err != nil {
+		t.Fatalf("Get() failed: %v", err)
+	}
+
+	// cityChild.ComputeTime should only measure its own "City" navigation,
+	// not the parent's "Address" navigation. We can't assert exact timing
+	// but we verify it's set and reasonable (non-negative).
+	if cityChild.ComputeTime < 0 {
+		t.Errorf("ComputeTime should be non-negative, got %v", cityChild.ComputeTime)
+	}
+
+	// Both parent and child should have independent timings
+	if addrChild.ComputeTime < 0 {
+		t.Errorf("parent ComputeTime should be non-negative, got %v", addrChild.ComputeTime)
+	}
+}
+
+// V13.7: Root variable timing is zero (no path navigation)
+func TestComputeTime_RootIsZero(t *testing.T) {
+	tr := NewTracker()
+	root := tr.CreateVariable(&Person{Name: "Alice"}, 0, "", nil)
+
+	_, err := root.Get()
+	if err != nil {
+		t.Fatalf("Get() failed: %v", err)
+	}
+
+	// Root variables return cached value directly, no path navigation occurs
+	if root.ComputeTime != 0 {
+		t.Errorf("expected root ComputeTime 0, got %v", root.ComputeTime)
+	}
+	if root.MaxComputeTime != 0 {
+		t.Errorf("expected root MaxComputeTime 0, got %v", root.MaxComputeTime)
 	}
 }

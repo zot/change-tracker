@@ -9,6 +9,7 @@ import (
 	"maps"
 	"reflect"
 	"strings"
+	"time"
 	"weak"
 )
 
@@ -230,7 +231,9 @@ type Variable struct {
 	ValuePriority      Priority // priority of the value
 	WrapperValue       any      // wrapper object for child navigation (optional)
 	WrapperJSON        any      // serialized WrapperValue
-	Error              error    // error from last get or nil if none
+	Error              error         // error from last get or nil if none
+	ComputeTime        time.Duration // duration of the most recent value recomputation
+	MaxComputeTime     time.Duration // maximum ComputeTime observed across all recomputations
 
 	tracker *Tracker
 }
@@ -363,7 +366,6 @@ func (t *Tracker) CreateVariableWithId(id int64, value any, parentID int64, path
 
 	// Update wrapper after ValueJSON is set
 	v.updateWrapper()
-	v.SetType()
 
 	if v.Properties["type"] != "" && !hadType {
 		t.RecordPropertyChange(v.ID, "type")
@@ -663,19 +665,18 @@ func (t *Tracker) checkSingleVariable(id int64) bool {
 	}
 
 	currentJSON := t.ToValueJSON(currentValue)
-	if !jsonEqual(v.ValueJSON, currentJSON) {
+	if !JsonEqual(v.ValueJSON, currentJSON) {
 		t.valueChanges[v.ID] = true
 		v.Value = currentValue
 		v.ValueJSON = currentJSON
 		v.updateWrapper()
-		v.SetType()
 		return true
 	}
 	return false
 }
 
-// jsonEqual compares two Value JSON values for equality.
-func jsonEqual(a, b any) bool {
+// JsonEqual compares two Value JSON values for equality.
+func JsonEqual(a, b any) bool {
 	// Use JSON serialization for comparison
 	aBytes, err1 := json.Marshal(a)
 	bBytes, err2 := json.Marshal(b)
@@ -1368,6 +1369,9 @@ func (v *Variable) GetValue() (any, error) {
 
 	current := parent.NavigationValue()
 
+	// Time only this variable's own path navigation (excludes parent value retrieval)
+	start := time.Now()
+
 	// Apply each path element
 	for i, elem := range v.Path {
 		var val any
@@ -1388,6 +1392,11 @@ func (v *Variable) GetValue() (any, error) {
 			return nil, err
 		}
 		current = val
+	}
+
+	v.ComputeTime = time.Since(start)
+	if v.ComputeTime > v.MaxComputeTime {
+		v.MaxComputeTime = v.ComputeTime
 	}
 
 	return current, nil
@@ -1416,7 +1425,6 @@ func (v *Variable) Set(value any) error {
 	v.Value = value
 	v.ValueJSON = v.tracker.ToValueJSON(value)
 	v.updateWrapper()
-	v.SetType()
 	if len(v.Path) == 0 {
 		return nil
 	}
@@ -1531,6 +1539,7 @@ func (v *Variable) updateWrapper() {
 				v.WrapperJSON = nil
 			}
 		}
+		v.SetType()
 	}()
 
 	// If no wrapper property or ValueJSON is nil, clear wrapper
@@ -1610,14 +1619,21 @@ func (v *Variable) SetType() {
 	j := v.WrapperJSON
 	val := v.WrapperValue
 	if j == nil {
+		if val != nil {
+			// Wrapper exists but WrapperJSON not set yet — type is managed by the resolver
+			return
+		}
 		j = v.ValueJSON
 		val = v.Value
 	}
 	if _, ok := j.(ObjectRef); ok {
 		typ := v.tracker.Resolver.GetType(v, val)
-		if typ != "" && typ != v.Properties["type"] {
+		if typ != v.Properties["type"] {
 			v.SetProperty("type", typ)
 		}
+	} else if v.Properties["type"] != "" && val == nil {
+		// Value is no longer an object reference and has no wrapper — clear the type
+		v.SetProperty("type", "")
 	}
 }
 
@@ -1670,7 +1686,6 @@ func (v *Variable) SetProperty(name, value string) {
 	case "wrapper":
 		// Trigger wrapper update when wrapper property changes
 		v.updateWrapper()
-		v.SetType()
 	}
 }
 

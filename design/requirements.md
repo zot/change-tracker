@@ -137,3 +137,12 @@
 - **R72:** DetectChanges collects active variables via tree traversal (respecting Active flag propagation), then checks them in priority order
 - **R73:** Non-readable variables are skipped during checking but their children are still collected for priority-ordered checking
 - **R74:** Readable ancestors are always checked before their descendants (parent-before-child guarantee); lower-priority parents are pulled forward when a higher-priority child is checked; a checked set prevents double-processing
+
+## Feature: Recomputation Timing
+**Source:** specs/main.md
+
+- **R75:** Variable has ComputeTime field (time.Duration) tracking the duration of the most recent value recomputation
+- **R76:** Variable has MaxComputeTime field (time.Duration) tracking the maximum ComputeTime observed across all recomputations
+- **R77:** ComputeTime measures only this variable's own path navigation, excluding parent value retrieval
+- **R78:** ComputeTime is updated on every value recomputation (Get, DetectChanges)
+- **R79:** MaxComputeTime is updated whenever ComputeTime exceeds the current maximum
