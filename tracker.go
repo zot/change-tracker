@@ -239,12 +239,12 @@ type Variable struct {
 	Access             string  // access mode: "r" (read-only), "w" (write-only), "rw" (read-write, default)
 	Properties         map[string]string
 	PropertyPriorities map[string]Priority
-	Path               []any    // parsed path elements
-	Value              any      // cached value for child navigation
-	ValueJSON          any      // cached Value JSON for change detection
-	ValuePriority      Priority // priority of the value
-	WrapperValue       any      // wrapper object for child navigation (optional)
-	WrapperJSON        any      // serialized WrapperValue
+	Path               []any         // parsed path elements
+	Value              any           // cached value for child navigation
+	ValueJSON          any           // cached Value JSON for change detection
+	ValuePriority      Priority      // priority of the value
+	WrapperValue       any           // wrapper object for child navigation (optional)
+	WrapperJSON        any           // serialized WrapperValue
 	Error              error         // error from last get or nil if none
 	ComputeTime        time.Duration // duration of the most recent value recomputation
 	MaxComputeTime     time.Duration // maximum ComputeTime observed across all recomputations
@@ -252,6 +252,13 @@ type Variable struct {
 	Diags              []string      // diagnostics from most recent value recomputation
 
 	tracker *Tracker
+}
+
+func (v *Variable) JsonForUpdate() any {
+	if v.WrapperJSON != nil {
+		return v.WrapperJSON
+	}
+	return v.ValueJSON
 }
 
 func (t *Tracker) ChangeAll(varID int64) {
@@ -685,25 +692,22 @@ func (t *Tracker) checkSingleVariable(id int64) bool {
 
 	currentJSON := t.ToValueJSON(currentValue)
 	if !JsonEqual(v.ValueJSON, currentJSON) {
-		t.valueChanges[v.ID] = true
+		old := v.JsonForUpdate()
 		v.Value = currentValue
 		v.ValueJSON = currentJSON
-		v.ChangeCount++
 		v.updateWrapper()
-		return true
+		if !JsonEqual(old, v.JsonForUpdate()) {
+			t.valueChanges[v.ID] = true
+			v.ChangeCount++
+			return true
+		}
 	}
 	return false
 }
 
 // JsonEqual compares two Value JSON values for equality.
 func JsonEqual(a, b any) bool {
-	// Use JSON serialization for comparison
-	aBytes, err1 := json.Marshal(a)
-	bBytes, err2 := json.Marshal(b)
-	if err1 != nil || err2 != nil {
-		return reflect.DeepEqual(a, b)
-	}
-	return string(aBytes) == string(bBytes)
+	return reflect.DeepEqual(a, b)
 }
 
 // sortChanges returns changes sorted by priority (high -> medium -> low).
@@ -926,7 +930,7 @@ func (t *Tracker) RegisterObject(obj any) (int64, bool) {
 
 func canRegisterObj(obj any) bool {
 	kind := reflect.ValueOf(obj).Kind()
-	return kind == reflect.Pointer || kind == reflect.UnsafePointer || kind == reflect.Map
+	return kind == reflect.Pointer || kind == reflect.UnsafePointer || kind == reflect.Map || kind == reflect.Func
 }
 
 // UnregisterObject removes an object from the registry.
@@ -1013,7 +1017,9 @@ func (t *Tracker) ToValueJSON(value any) any {
 
 	// Not registerable - check if it's a slice/array and process elements
 	rv := reflect.ValueOf(value)
-	if rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array {
+	if rv.Kind() == reflect.Struct {
+		return nil
+	} else if rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array {
 		result := make([]any, rv.Len())
 		for i := 0; i < rv.Len(); i++ {
 			elem := t.ToValueJSON(rv.Index(i).Interface())
