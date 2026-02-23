@@ -12,7 +12,10 @@
 - Set(obj, pathElement, value): assigns value at path element within obj
 - Call(obj, methodName): invokes zero-arg method or variadic with no args, returns result
 - CallWith(obj, methodName, value): invokes one-arg method or variadic method, ignores return value
+- CreateValue(variable, typ, value): creates a value for a variable with a "create" property; returns the created value or nil
 - CreateWrapper(variable *Variable): creates a wrapper object for the variable (returns nil if no wrapper needed)
+- GetType(variable, value): returns a type string for the given value (used by Variable.SetType to update the "type" property)
+- ConvertToValueJSON(tracker, value): converts a value to its JSON-serializable form; custom resolvers override this for domain-specific types (e.g., Lua tables); default returns value unchanged
 
 ## Collaborators
 - Tracker: tracker implements this interface as default resolver

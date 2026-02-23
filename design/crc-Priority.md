@@ -10,7 +10,7 @@
 - PriorityHigh: 1 - high priority level
 
 ### Does
-- (type definition only - no methods)
+- ParsePriority(s string): converts a string ("low", "medium", "high") to a Priority value; defaults to PriorityMedium for unrecognized strings
 
 ## Collaborators
 - Variable: uses Priority for ValuePriority and PropertyPriorities

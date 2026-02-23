@@ -95,20 +95,44 @@ Client              Tracker             Variable            Resolver        Chan
   |                    |        |<-------'  |                   |              |
   |                    |        |           |                   |              |
   |                    |        |    [if different]             |              |
-  |                    |        | valueChanges[ID]              |              |
-  |                    |        | = true    |                   |              |
-  |                    |        |--------.  |                   |              |
-  |                    |        |<-------'  |                   |              |
   |                    |        |           |                   |              |
-  |                    |        |           | v.ChangeCount++   |              |
+  |                    |        | old =     |                   |              |
+  |                    |        | v.JsonForUpdate()             |              |
+  |                    |        |---------->|                   |              |
+  |                    |        |           | (WrapperJSON ??   |              |
+  |                    |        |           |  ValueJSON)       |              |
+  |                    |        | old       |                   |              |
+  |                    |        |<----------|                   |              |
+  |                    |        |           |                   |              |
+  |                    |        |           | Value =           |              |
+  |                    |        |           | currentValue      |              |
   |                    |        |---------->|                   |              |
   |                    |        |           |                   |              |
   |                    |        |           | ValueJSON =       |              |
   |                    |        |           | currentJSON       |              |
   |                    |        |---------->|                   |              |
   |                    |        |           |                   |              |
-  |                    |        |           | Value =           |              |
-  |                    |        |           | currentValue      |              |
+  |                    |        |           | updateWrapper()   |              |
+  |                    |        |---------->|                   |              |
+  |                    |        |           |                   |              |
+  |                    |        | new =     |                   |              |
+  |                    |        | v.JsonForUpdate()             |              |
+  |                    |        |---------->|                   |              |
+  |                    |        | new       |                   |              |
+  |                    |        |<----------|                   |              |
+  |                    |        |           |                   |              |
+  |                    |        | compare   |                   |              |
+  |                    |        | old vs new|                   |              |
+  |                    |        |--------.  |                   |              |
+  |                    |        |<-------'  |                   |              |
+  |                    |        |           |                   |              |
+  |                    |        |  [if different]               |              |
+  |                    |        | valueChanges[ID]              |              |
+  |                    |        | = true    |                   |              |
+  |                    |        |--------.  |                   |              |
+  |                    |        |<-------'  |                   |              |
+  |                    |        |           |                   |              |
+  |                    |        |           | v.ChangeCount++   |              |
   |                    |        |---------->|                   |              |
   |                    |        |           |                   |              |
   |                    |<-------'           |                   |              |
@@ -150,8 +174,8 @@ Client              Tracker             Variable            Resolver        Chan
 - Collection phase: Non-readable variables (w, action) are skipped but their children are still collected
 - Check phase: All high-priority variables checked first, then medium, then low
 - **Parent-before-child guarantee**: Before checking any variable, checkWithAncestors walks up the parent chain and checks any unchecked readable ancestors first. This ensures NavigationValue() is fresh. A `checked` set prevents double-processing. Lower-priority parents are pulled forward when needed.
-- Comparison uses Value JSON representation (deep equality)
-- Both Value and ValueJSON are updated after comparison
+- **Wrapper-aware comparison**: checkSingleVariable uses a two-phase comparison. First it compares currentJSON vs v.ValueJSON. If different, it saves `old = v.JsonForUpdate()`, updates Value/ValueJSON, calls updateWrapper(), then compares `old` vs `v.JsonForUpdate()`. A change is only reported if the wrapper-aware JSON differs. This means a value change that doesn't affect the external (wrapper) representation is silently absorbed — the variable's cache is updated but no change is reported to consumers.
+- Comparison uses reflect.DeepEqual (JsonEqual)
 - Root variables use their cached Value directly (no path navigation)
 - Child variables navigate from parent's cached Value using path
 - DetectChanges only marks value changes (not property changes) and returns bool

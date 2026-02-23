@@ -27,13 +27,18 @@
 
 ### Does
 - Get(): checks access (error if "w" or "action"), navigates from parent's NavigationValue using path, returns current value
+- GetId(): returns the variable's ID
+- GetValue(): (internal) navigates to value without access checks; used for caching during CreateVariable and DetectChanges
 - Set(value): checks access (error if "r"), navigates from parent's NavigationValue to target location and sets value; for write-only or action variables with `()` paths, calls the method for side effects
 - Parent(): returns parent variable or nil
 - SetActive(active bool): sets whether the variable and its children participate in change detection
 - NavigationValue(): returns WrapperValue if present, otherwise Value (used by child variables for path navigation)
+- JsonForUpdate(): returns WrapperJSON if present, otherwise ValueJSON (used by checkSingleVariable for wrapper-aware change comparison)
+- SetType(): (internal) updates "type" property based on current ValueJSON/WrapperJSON via Resolver.GetType; called after value or wrapper changes
 - GetAccess(): returns access mode ("r", "w", "rw", or "action")
 - IsReadable(): returns true if access allows reading ("r" or "rw")
 - IsWritable(): returns true if access allows writing ("w", "rw", or "action")
+- IsAction(): returns true if access is "action"
 - GetProperty(name): returns property value or empty string
 - SetProperty(name, value): sets or removes property, handles priority suffixes, records change in tracker
   - Handles priority suffixes (:low, :medium, :high)

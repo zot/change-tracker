@@ -15,6 +15,12 @@ Client              Tracker             Registry
   |  (value)           |                    |
   |------------------->|                    |
   |                    |                    |
+  |                    | ConvertToValueJSON |
+  |                    | (value) via        |
+  |                    | Resolver           |
+  |                    |--------.           |
+  |                    |<-------'           |
+  |                    |                    |
   |                    | check type         |
   |                    |--------.           |
   |                    |<-------'           |
@@ -24,10 +30,16 @@ Client              Tracker             Registry
   |                    |-------.            |
   |                    |<------'            |
   |                    |                    |
-  |                    |    [if primitive]  |
-  |                    |    (string,number, |
-  |                    |     bool)          |
-  |                    | return value       |
+  |                    | [if ptr/map/func]  |
+  |                    | RegisterObject     |
+  |                    | (value)            |
+  |                    |  [if registered]   |
+  |                    | return ObjectRef   |
+  |                    |-------.            |
+  |                    |<------'            |
+  |                    |                    |
+  |                    |    [if struct]     |
+  |                    | return nil         |
   |                    |-------.            |
   |                    |<------'            |
   |                    |                    |
@@ -41,36 +53,10 @@ Client              Tracker             Registry
   |                    |-------.            |
   |                    |<------'            |
   |                    |                    |
-  |                    |    [if pointer/map]|
-  |                    | LookupObject       |
-  |                    | (value)            |
-  |                    |------------------->|
-  |                    |                    |
-  |                    |    [if found]      |
-  |                    |      id, true      |
-  |                    |<-------------------|
-  |                    | return ObjectRef   |
-  |                    | {Obj: id}          |
-  |                    |-------.            |
-  |                    |<------'            |
-  |                    |                    |
-  |                    |    [if not found]  |
-  |                    |      0, false      |
-  |                    |<-------------------|
-  |                    |                    |
-  |                    | allocate nextID    |
-  |                    |-------.            |
-  |                    |<------'  id        |
-  |                    |                    |
-  |                    | register (internal)|
-  |                    | (value, id)        |
-  |                    |------------------->|
-  |                    |                    |
-  |                    |      registered    |
-  |                    |<-------------------|
-  |                    |                    |
-  |                    | return ObjectRef   |
-  |                    | {Obj: id}          |
+  |                    |    [if primitive]  |
+  |                    |    (string,number, |
+  |                    |     bool)          |
+  |                    | return value       |
   |                    |-------.            |
   |                    |<------'            |
   |                    |                    |
@@ -81,6 +67,14 @@ Client              Tracker             Registry
 
 ## Notes
 
+### Processing Order
+1. Resolver.ConvertToValueJSON() — allows custom resolvers to transform domain-specific types
+2. nil check — returns nil
+3. RegisterObject attempt — pointers, maps, and funcs become ObjectRef{Obj: id}
+4. Struct check — returns nil (structs are not serializable as Value JSON)
+5. Slice/array — recursive ToValueJSON on each element
+6. Fallthrough — primitives (string, number, bool) returned as-is
+
 ### Value JSON Types
 | Go Type | Value JSON |
 |---------|------------|
@@ -89,14 +83,14 @@ Client              Tracker             Registry
 | int, float, etc | number |
 | bool | bool |
 | slice, array | array (recursive) |
-| pointer, map | ObjectRef{Obj: id} |
+| struct | nil |
+| pointer, map, func | ObjectRef{Obj: id} |
 
-### Auto-Registration (Only Registration Mechanism)
-- ToValueJSON is the **only** way objects get registered - there is no public RegisterObject method
-- When an unregistered pointer or map is encountered, it is automatically registered
-- The next available ID is allocated and assigned to the object
-- This applies to: variable values (during CreateVariable/DetectChanges), wrapper objects, and nested objects in arrays
-- After auto-registration, the object can be looked up via LookupObject
+### Registration
+- ToValueJSON auto-registers unregistered pointers, maps, and funcs via RegisterObject
+- RegisterObject is also available as a public method for explicit registration
+- Auto-registration applies to: variable values (during CreateVariable/DetectChanges), wrapper objects, and nested objects in arrays
+- After registration, the object can be looked up via LookupObject
 
 ### Object Reference Format
 ```go

@@ -9,25 +9,24 @@
 - (internal to Tracker - not a separate type)
 
 ### Does
-- register(obj, id): (internal) stores weak reference to object with associated ID
-- unregister(obj): removes object from registry
-- lookup(obj): finds ID for object
-- getObject(id): retrieves object by ID (returns nil if collected)
+- RegisterObject(obj): registers an object and returns (id, true); returns existing ID if already registered; returns (0, false) if not registerable
+- UnregisterObject(obj): removes object from registry
+- LookupObject(obj): finds ID for registered object
+- GetObject(id): retrieves object by ID (returns nil if collected)
 - cleanup(): removes entries for garbage-collected objects (automatic via weak refs)
 
 ## Collaborators
-- Tracker: owns and manages the registry; ToValueJSON performs registration
-- ToValueJSON: the only mechanism that registers objects (automatic during serialization)
+- Tracker: owns and manages the registry
+- ToValueJSON: auto-registers objects during serialization (most common registration path)
 
 ## Sequences
-- seq-to-value-json.md: auto-registers unregistered pointers/maps during serialization
+- seq-to-value-json.md: auto-registers unregistered pointers/maps/funcs during serialization
 
 ## Registration Mechanism
 
-Objects are registered **only** via `ToValueJSON()`:
-- When ToValueJSON encounters an unregistered pointer or map, it allocates the next available ID and registers the object
-- There is no public RegisterObject method - registration is internal only
-- This applies to: variable values (during CreateVariable/DetectChanges), wrapper objects, and nested objects in arrays
+Objects can be registered via:
+- **ToValueJSON()**: Automatically registers unregistered objects during serialization (most common path)
+- **RegisterObject()**: Explicit registration for cases where an object needs an ID before serialization
 
 ## Notes
 
@@ -35,7 +34,7 @@ Objects are registered **only** via `ToValueJSON()`:
 - Uses Go 1.24+ `weak.Pointer` for weak references
 - Objects can be garbage collected when no longer referenced by application code
 - Registry entries are automatically cleaned up when objects are collected
-- Only pointers and maps can be registered
+- Pointers, maps, and funcs can be registered
 
 ### Internal Structure
 ```go

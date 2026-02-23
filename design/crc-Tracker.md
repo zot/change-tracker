@@ -9,7 +9,7 @@
 - nextID: int64 - next variable ID to assign (starts at 1)
 - rootIDs: map[int64]bool - set of root variable IDs (variables with ParentID == 0) for efficient tree traversal
 - valueChanges: map[int64]bool - set of variable IDs with value changes
-- propertyChanges: map[int64][]string - map of variable IDs to changed property names
+- PropertyChanges: map[int64]*propertyChange - map of variable IDs to changed property names (exported)
 - sortedChanges: []Change - reusable slice for sortChanges output (flat array, not pointers)
 - objectRegistry: map[uintptr]weakEntry - weak map from object pointers to variable IDs
 - Resolver: Resolver - pluggable resolver for path navigation (defaults to self)
@@ -24,20 +24,26 @@
 - GetVariable(id): retrieves variable by ID
 - DestroyVariable(id): removes variable, unregisters object, removes from change tracking, removes from rootIDs if root, removes ID from parent's ChildIDs if child
 - DetectChanges(): collects active variables via tree traversal (respecting Active flag), groups by priority, checks in priority order with parent-before-child guarantee via checked set, returns bool
+- GetChanges(): calls sortChanges, clears internal change records, returns sorted []Change
+- ChangeAll(varID): marks variable as having value and all property changes (convenience for forcing full re-send)
 - collectActiveVariables(id, &high, &med, &low) (internal): recursive tree walk that collects readable variables into priority buckets; skips inactive subtrees; skips non-readable but still collects their children
 - checkWithAncestors(id, checked) (internal): ensures readable ancestors are checked before this variable; uses checked set to prevent double-processing; delegates to checkSingleVariable
-- checkSingleVariable(id) (internal): checks one variable for changes without recursion; gets value, converts to ValueJSON, compares, updates cache if changed
+- checkSingleVariable(id) (internal): checks one variable for changes; compares ValueJSON, then if changed updates Value/ValueJSON/wrapper and re-compares via JsonForUpdate() — only reports a change if the wrapper-aware JSON differs (see seq-detect-changes.md)
 - sortChanges() (internal): returns []Change sorted by priority (high -> medium -> low), reuses sortedChanges slice
-- recordPropertyChange(varID, propName): records a property change (called by Variable.SetProperty)
+- RecordPropertyChange(varID, propName): records a property change (called by Variable.SetProperty)
 - Variables(): returns all variables
 - RootVariables(): returns variables with no parent (uses rootIDs set)
 - Children(parentID): returns child variables of a parent (uses parent's ChildIDs)
+- RegisterObject(obj): registers an object and returns its ID; returns existing ID if already registered; only pointers, maps, and funcs can be registered
 - UnregisterObject(obj): removes object from registry
 - LookupObject(obj): finds ID for registered object
 - GetObject(id): retrieves object by ID (may return nil if collected)
-- ToValueJSON(value): serializes value to Value JSON form; auto-registers unregistered pointers/maps (this is the ONLY way objects get registered)
+- ToValueJSON(value): serializes value to Value JSON form; auto-registers unregistered pointers/maps/funcs; returns nil for structs
 - ToValueJSONBytes(value): serializes value to JSON bytes
+- FromValueJSONBytes(value): deserializes JSON bytes to value, resolving ObjectRef entries back to objects
 - Get(obj, pathElement): resolver implementation using reflection
+- GetByString(rv, name): exported sub-method of Get for struct fields and map keys
+- GetByIndex(rv, index): exported sub-method of Get for slice/array indices
 - Set(obj, pathElement, value): resolver implementation using reflection
 - Call(obj, methodName): resolver implementation - invokes zero-arg method via reflection
 - CallWith(obj, methodName, value): resolver implementation - invokes one-arg void method via reflection
