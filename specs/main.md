@@ -21,7 +21,7 @@ The package provides:
 
 ### Explicit Over Automatic
 - Changes are detected only when `DetectChanges()` is called
-- `DetectChanges()` returns sorted changes and clears internal state automatically
+- `DetectChanges()` returns `bool`; `GetChanges()` returns sorted changes and clears internal state
 
 ## Core Concepts
 
@@ -51,6 +51,8 @@ Each variable has:
 - **Value** - Cached value for child navigation
 - **ValueJSON** - Cached Value JSON for change detection
 - **ValuePriority** - Priority level for the variable's value
+- **WrapperValue** - Optional wrapper object for child navigation (created via `Resolver.CreateWrapper` when "wrapper" property is set)
+- **WrapperJSON** - Serialized form of WrapperValue (via `ToValueJSON`)
 - **ComputeTime** - Duration of the most recent value recomputation (excludes parent value retrieval, measures only this variable's own path navigation)
 - **MaxComputeTime** - Maximum ComputeTime observed across all recomputations
 - **Diags** - Slice of diagnostic strings collected during the most recent value recomputation (cleared at the start of each recompute)
@@ -101,9 +103,9 @@ Values and properties can have priority levels: **Low**, **Medium** (default), a
 
 ### Object Registry
 
-The tracker maintains a **weak map** from Go objects (pointers and maps) to variable IDs:
+The tracker maintains a **weak map** from Go objects (pointers, maps, and funcs) to IDs:
 
-- When a variable is created with a pointer or map value, the object is registered
+- Objects are registered automatically via `ToValueJSON()` or explicitly via `RegisterObject()`
 - Objects have identity independent of where they appear
 - The same object in multiple locations serializes to the same `{"obj": id}`
 - Uses Go 1.24+ `weak` package for weak references
@@ -117,9 +119,10 @@ The tracker maintains a **weak map** from Go objects (pointers and maps) to vari
 
 - **Primitives**: strings, numbers, booleans, null
 - **Arrays**: with elements in Value JSON form
-- **Object references**: `{"obj": ID}` for registered objects (pointers, maps)
+- **Object references**: `{"obj": ID}` for registered objects (pointers, maps, funcs)
+- **Structs**: serialize as `nil` (not directly serializable)
 
-All pointers and maps must be registered before serialization. Unregistered pointers/maps cause an error.
+Unregistered pointers, maps, and funcs are auto-registered during `ToValueJSON()`.
 
 This allows:
 - Consistent identity for objects appearing in multiple places
@@ -131,12 +134,18 @@ This allows:
 A **value resolver** knows how to navigate into values:
 - `Get(obj, pathElement)` - Returns the value at the path element within obj
 - `Set(obj, pathElement, value)` - Sets a value at the path element within obj
+- `Call(obj, methodName)` - Invokes a zero-arg method, returns result
+- `CallWith(obj, methodName, value)` - Invokes a one-arg method
+- `CreateValue(variable, typ, value)` - Creates a value for a variable with a "create" property
+- `CreateWrapper(variable)` - Creates a wrapper object for child navigation
+- `GetType(variable, value)` - Returns a type string for the value
+- `ConvertToValueJSON(tracker, value)` - Converts domain-specific types for serialization
 
 The tracker itself implements the resolver interface using Go reflection, supporting:
 - Struct fields (by name)
 - Map keys (string keys)
 - Slice/array indices (integer keys)
-- Method calls (zero-argument methods that return a value)
+- Method calls (zero-argument methods that return a value, one-argument void methods)
 
 ### Change Detection
 
@@ -145,10 +154,12 @@ Change detection uses priority-ordered graph traversal:
 1. The tracker maintains a set of root variable IDs (variables with ParentID == 0)
 2. `DetectChanges()` collects active variables via tree traversal (respecting Active flag propagation), then checks them in priority order:
    - **Collection phase**: Walk the tree from roots. Inactive variables prune their entire subtree. Active readable variables are grouped by priority (high, medium, low). Non-readable variables are skipped but their children are still collected.
-   - **Check phase**: Check all high-priority variables first, then all medium, then all low. Before checking any variable, ensure its readable ancestors have been checked first (parent-before-child guarantee). A `checked` set prevents double-processing. For each variable, convert current value to Value JSON and compare to stored Value JSON.
+   - **Check phase**: Check all high-priority variables first, then all medium, then all low. Before checking any variable, ensure its readable ancestors have been checked first (parent-before-child guarantee). A `checked` set prevents double-processing. For each variable, convert current value to Value JSON and compare to stored Value JSON. If different, perform wrapper-aware comparison (see below).
 3. On variable creation, the initial value is converted to Value JSON and stored
 4. After comparison, current Value JSON becomes the new stored Value JSON
 5. `GetChanges()` returns changes sorted by priority and clears internal change records (but the returned slice remains valid)
+
+**Wrapper-aware comparison**: When a variable's ValueJSON changes, the check phase saves the old wrapper-aware JSON (`JsonForUpdate()`), updates Value/ValueJSON, calls `updateWrapper()`, then compares the old wrapper-aware JSON to the new. A change is only reported if the wrapper-aware JSON differs. This means a value change that doesn't affect the external (wrapper) representation is silently absorbed — the cache is updated but no change is reported to consumers.
 
 Each variable stores its last known Value JSON for comparison purposes.
 
@@ -180,6 +191,15 @@ Setting a variable's properties via `SetProperty()` also records changes in the 
 - Setting `path` updates the variable's `Path` field (re-parses the path)
 - Property changes are tracked separately from value changes
 
+### Wrapper Support
+
+A variable can have an optional wrapper that stands in for its value when child variables navigate paths. This allows the resolver to provide a different interface to children than the underlying value.
+
+- When the "wrapper" property is set and ValueJSON is non-nil, `Resolver.CreateWrapper(variable)` is called
+- Child variables use `NavigationValue()` which returns WrapperValue if present, otherwise Value
+- Change detection uses `JsonForUpdate()` which returns WrapperJSON if present, otherwise ValueJSON
+- Wrappers can be preserved across value changes by returning the same pointer from `CreateWrapper`
+
 ### Change Objects
 
 A change record indicates what changed for a variable:
@@ -189,7 +209,7 @@ A change record indicates what changed for a variable:
 
 ### Sorted Changes
 
-`DetectChanges()` returns changes sorted by priority:
+`GetChanges()` returns changes sorted by priority:
 - Returns a slice of change objects sorted by priority (high → medium → low)
 - Changes with mixed priorities are split: a variable may appear multiple times at different priority levels
 - The value's priority determines where value changes appear
@@ -220,8 +240,9 @@ countVar := tracker.CreateVariable(nil, root.ID, "Count", nil)
 // Modify value externally
 data.Count = 100
 
-// Detect the change - returns sorted changes and clears internal state
-changes := tracker.DetectChanges()
+// Detect the change
+tracker.DetectChanges()  // returns true
+changes := tracker.GetChanges()
 // changes contains countVar.ID with ValueChanged: true
 ```
 
@@ -322,8 +343,9 @@ labelVar := tracker.CreateVariable(nil, root.ID, "Label?priority=low", nil)
 data.Count = 42
 labelVar.SetProperty("hint:medium", "A helpful hint")
 
-// DetectChanges returns sorted changes (high → medium → low) and clears internal state
-for _, change := range tracker.DetectChanges() {
+// DetectChanges returns bool; GetChanges returns sorted changes (high → medium → low)
+tracker.DetectChanges()
+for _, change := range tracker.GetChanges() {
     // High priority changes come first, then medium, then low
     fmt.Printf("Variable %d (priority %d): value=%v props=%v\n",
         change.VariableID, change.Priority,

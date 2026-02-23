@@ -41,7 +41,7 @@ items := []*Person{alice, bob}  // both registered
 
 ### Object References
 
-Registered objects (pointers and maps) serialize as:
+Registered objects (pointers, maps, and funcs) serialize as:
 
 ```json
 {"obj": 123}
@@ -49,16 +49,20 @@ Registered objects (pointers and maps) serialize as:
 
 Where `123` is the variable ID associated with the object.
 
+### Structs
+
+Structs serialize as `nil`. They are not directly serializable as Value JSON — use a pointer to the struct instead, which will be registered and serialized as an object reference.
+
 ## Registration Rules
 
-Objects are registered in the object registry automatically via `ToValueJSON()`:
+Objects can be registered via:
 
-- When `ToValueJSON()` encounters an unregistered pointer or map, it automatically registers it with the next available ID
-- This is the **only** way objects get registered - there is no explicit registration
-- Only pointers and maps can be registered
-- Registration happens when `ValueJSON` or `WrapperJSON` is computed
+- **`ToValueJSON()`**: Automatically registers unregistered pointers, maps, and funcs during serialization
+- **`RegisterObject()`**: Explicit registration for cases where an object needs an ID before serialization
 
-This automatic registration ensures that:
+Pointers, maps, and funcs can be registered. Registration happens when `ValueJSON` or `WrapperJSON` is computed.
+
+This registration ensures that:
 - Variable values are registered when their ValueJSON is computed during CreateVariable or DetectChanges
 - Wrapper objects are registered when their WrapperJSON is computed
 - Nested objects in arrays are properly converted to object references
@@ -67,22 +71,22 @@ This automatic registration ensures that:
 
 ```
 ToValueJSON(value):
+    value = Resolver.ConvertToValueJSON(tracker, value)
     if value is nil:
         return nil
-    if value is primitive (string, number, bool):
-        return value
+    if value is pointer, map, or func:
+        id, ok = RegisterObject(value)
+        if ok: return ObjectRef{Obj: id}
+    if value is struct:
+        return nil
     if value is slice/array:
         return [ToValueJSON(elem) for elem in value]
-    if value is pointer or map:
-        if registered(value):
-            return ObjectRef{Obj: lookupID(value)}
-        else:
-            id = allocateNextID()
-            register(value, id)
-            return ObjectRef{Obj: id}
+    return value  // primitives pass through
 ```
 
-Auto-registration assigns the next available variable ID to unregistered objects. This enables serialization of arrays containing objects that weren't explicitly registered.
+Auto-registration assigns the next available ID to unregistered objects. This enables serialization of arrays containing objects that weren't explicitly registered.
+
+Nested arrays are not supported — `ToValueJSON` panics if an array element is itself an array.
 
 ## Examples
 
@@ -130,16 +134,7 @@ id, _ := tracker.LookupObject(alice)  // returns 1, true
 
 ### Nested Arrays
 
-```go
-// Arrays can be nested
-matrix := [][]*Person{
-    {alice, bob},
-    {bob, alice},
-}
-
-// Value JSON result:
-// [[{"obj": 1}, {"obj": 2}], [{"obj": 2}, {"obj": 1}]]
-```
+Nested arrays are **not supported** — `ToValueJSON` panics if an array element is itself an array (e.g., `[][]any`). Arrays should contain only primitives and object references.
 
 ### Registered Map
 

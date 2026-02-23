@@ -24,6 +24,16 @@ const (
 )
 ```
 
+### ParsePriority
+
+Converts a string to a Priority value.
+
+```go
+func ParsePriority(s string) Priority
+```
+
+Returns `PriorityLow` for "low", `PriorityHigh` for "high", and `PriorityMedium` for all other values (including "medium").
+
 ### Tracker
 
 The change tracker.
@@ -54,6 +64,8 @@ type Variable struct {
     Value              any       // cached value for child navigation
     ValueJSON          any       // cached Value JSON for change detection
     ValuePriority      Priority  // priority of the value (from "priority" property)
+    WrapperValue       any            // wrapper object for child navigation (optional)
+    WrapperJSON        any            // serialized WrapperValue
     Error              error          // error from last Get/Set operation or nil
     ComputeTime        time.Duration  // duration of most recent value recomputation
     MaxComputeTime     time.Duration  // maximum ComputeTime across all recomputations
@@ -75,15 +87,28 @@ Interface for navigating into values.
 ```go
 type Resolver interface {
     // Get retrieves a value at the given path element within obj.
-    // pathElement can be:
-    //   - string: field name, map key, or method name (with "()" suffix for methods)
-    //   - int: slice/array index (0-based)
     Get(obj any, pathElement any) (any, error)
 
     // Set assigns a value at the given path element within obj.
-    // pathElement types same as Get.
-    // Returns error if the path element doesn't exist or isn't settable.
     Set(obj any, pathElement any, value any) error
+
+    // Call invokes a zero-argument method and returns its result.
+    Call(obj any, methodName string) (any, error)
+
+    // CallWith invokes a one-argument method with the given value.
+    CallWith(obj any, methodName string, value any) error
+
+    // CreateValue creates a value for a variable with a "create" property.
+    CreateValue(variable *Variable, typ string, value any) any
+
+    // CreateWrapper creates a wrapper object for child navigation.
+    CreateWrapper(variable *Variable) any
+
+    // GetType returns a type string for the given value.
+    GetType(variable *Variable, value any) string
+
+    // ConvertToValueJSON converts domain-specific types for serialization.
+    ConvertToValueJSON(tracker *Tracker, value any) any
 }
 ```
 
@@ -281,33 +306,53 @@ func (t *Tracker) DestroyVariable(id int64)
 
 ### DetectChanges
 
-Compares current Value JSON to stored Value JSON using tree traversal, updates the changed set, and returns sorted changes.
+Collects active variables via tree traversal, checks them in priority order, and returns whether any changes were found.
 
 ```go
-func (t *Tracker) DetectChanges() []Change
+func (t *Tracker) DetectChanges() bool
+```
+
+**Returns:** `true` if any value changes were detected, `false` otherwise.
+
+**Behavior:**
+1. Clears all Variable.Error fields to nil
+2. **Collection phase**: For each root variable ID, walks the tree collecting active readable variables into priority buckets (high, medium, low). Inactive variables prune their entire subtree. Non-readable variables are skipped but their children are still collected.
+3. **Check phase**: Processes variables in priority order (high, medium, low). Before checking any variable, ensures its readable ancestors have been checked first (parent-before-child guarantee). For each variable:
+   - Gets current value and converts to Value JSON
+   - Compares to stored Value JSON
+   - If different: saves old wrapper-aware JSON (`JsonForUpdate()`), updates Value/ValueJSON, calls `updateWrapper()`, then compares old vs new wrapper-aware JSON
+   - Only reports a change if the wrapper-aware JSON differs
+4. Increments `Tracker.ChangeCount` if any changes were found
+
+**Notes:**
+- Property changes are recorded immediately when `SetProperty()` is called, not during `DetectChanges()`.
+- Call `GetChanges()` after `DetectChanges()` to retrieve and clear the change records.
+
+### GetChanges
+
+Returns sorted changes and clears internal change records.
+
+```go
+func (t *Tracker) GetChanges() []Change
 ```
 
 **Returns:** A slice of Change objects sorted by priority (high → medium → low).
 
 **Behavior:**
-1. For each root variable ID in the root variable set:
-   - Perform a depth-first traversal starting from the root variable
-   - For each variable visited:
-     - If the variable is inactive (`Active == false`), skip it and do not visit its children
-     - If the variable is active:
-       - Get the current value and convert to Value JSON
-       - Compare to the stored Value JSON
-       - If different, mark the variable's value as changed
-       - Update the stored Value JSON to the current Value JSON
-       - Recursively visit all child variables
-2. Sort all changes (value and property) by priority
-3. Clear the internal change records but preserve the sorted changes slice
-4. Return the sorted changes
+- Calls internal `sortChanges()` to build sorted `[]Change`
+- Clears internal valueChanges and PropertyChanges maps
+- A variable may appear multiple times if it has changes at different priority levels
+- Reuses an internal slice to minimize allocations. The returned slice is valid until the next call to `GetChanges()`
 
-**Notes:**
-- Property changes are recorded immediately when `SetProperty()` is called, not during `DetectChanges()`. The sorting step collects both value changes detected in step 1 and any property changes recorded since the last `DetectChanges()`.
-- A variable may appear multiple times in the result if it has changes at different priority levels (e.g., high-priority value change and low-priority property change).
-- Reuses an internal slice to minimize allocations. The returned slice is valid until the next call to `DetectChanges()`.
+### ChangeAll
+
+Marks a variable as having both value and all property changes.
+
+```go
+func (t *Tracker) ChangeAll(varID int64)
+```
+
+**Behavior:** Convenience method for forcing a full re-send of a variable's state. Marks the variable's value as changed and records changes for all its properties.
 
 ### Variables
 
@@ -337,7 +382,17 @@ func (t *Tracker) Children(parentID int64) []*Variable
 
 ## Object Registry Methods
 
-Objects are registered automatically via `ToValueJSON()` - there is no manual registration API. See value-json.md for details.
+Objects can be registered automatically via `ToValueJSON()` or explicitly via `RegisterObject()`.
+
+### RegisterObject
+
+Registers an object and returns its ID.
+
+```go
+func (t *Tracker) RegisterObject(obj any) (int64, bool)
+```
+
+**Returns:** `(id, true)` if registered or already registered, `(0, false)` if not registerable. Only pointers, maps, and funcs can be registered.
 
 ### UnregisterObject
 
@@ -377,13 +432,15 @@ Serializes a value to Value JSON form.
 func (t *Tracker) ToValueJSON(value any) any
 ```
 
-**Returns:** The value in Value JSON form:
-- Primitives (string, number, bool, nil) pass through unchanged
-- Registered objects (pointers, maps) become `ObjectRef{Obj: id}`
-- Slices/arrays become slices with elements in Value JSON form
-- Unregistered pointers/maps are auto-registered and become `ObjectRef{Obj: id}`
+**Processing order:**
+1. `Resolver.ConvertToValueJSON()` — allows custom resolvers to transform domain-specific types
+2. nil → returns nil
+3. Pointers, maps, funcs → `RegisterObject()`, returns `ObjectRef{Obj: id}`
+4. Structs → returns nil (structs are not serializable as Value JSON)
+5. Slices/arrays → recursive `ToValueJSON` on each element
+6. Primitives (string, number, bool) → returned as-is
 
-**Auto-Registration:** This is the only way objects get registered. When an unregistered pointer or map is encountered during serialization, it is automatically registered with the next available ID. This applies to variable values (when computing ValueJSON), wrappers (when computing WrapperJSON), and nested objects in arrays.
+**Auto-Registration:** When an unregistered pointer, map, or func is encountered during serialization, it is automatically registered with the next available ID via `RegisterObject()`. This applies to variable values (when computing ValueJSON), wrappers (when computing WrapperJSON), and nested objects in arrays.
 
 ### ToValueJSONBytes
 
@@ -394,6 +451,16 @@ func (t *Tracker) ToValueJSONBytes(value any) ([]byte, error)
 ```
 
 **Returns:** JSON-encoded bytes of the Value JSON form.
+
+### FromValueJSONBytes
+
+Deserializes JSON bytes to a value, resolving ObjectRef entries back to objects.
+
+```go
+func (t *Tracker) FromValueJSONBytes(value []byte) (any, error)
+```
+
+**Returns:** The deserialized value with `{"obj": id}` entries resolved back to registered objects, or an error if deserialization fails or an object reference is invalid.
 
 ### IsObjectRef
 
@@ -419,8 +486,18 @@ The Tracker type implements the Resolver interface, providing reflection-based v
 
 ```go
 func (t *Tracker) Get(obj any, pathElement any) (any, error)
+func (t *Tracker) GetByString(rv reflect.Value, name string) (any, error)
+func (t *Tracker) GetByIndex(rv reflect.Value, index int) (any, error)
 func (t *Tracker) Set(obj any, pathElement any, value any) error
+func (t *Tracker) Call(obj any, methodName string) (any, error)
+func (t *Tracker) CallWith(obj any, methodName string, value any) error
+func (t *Tracker) CreateValue(variable *Variable, typ string, value any) any
+func (t *Tracker) CreateWrapper(variable *Variable) any
+func (t *Tracker) GetType(variable *Variable, value any) string
+func (t *Tracker) ConvertToValueJSON(tracker *Tracker, value any) any
 ```
+
+`GetByString` and `GetByIndex` are exported sub-methods of `Get` for direct use when the reflect.Value is already available.
 
 ### Get Behavior
 
@@ -464,12 +541,29 @@ func (v *Variable) Get() (any, error)
 ```
 
 **Behavior:**
-1. Get the parent's cached value (or nil for root variables)
-2. Apply each path element using the tracker's resolver
-3. Cache the result for child navigation
-4. Return the value
+1. Checks access (error if "w" or "action")
+2. Get the parent's cached value (or nil for root variables)
+3. Apply each path element using the tracker's resolver
+4. Cache the result for child navigation
+5. Return the value
 
 **Returns:** The value, or error if navigation fails.
+
+### GetId
+
+Returns the variable's ID.
+
+```go
+func (v *Variable) GetId() int64
+```
+
+### GetValue
+
+Internal method that navigates to the value without access checks. Used for caching during CreateVariable and DetectChanges.
+
+```go
+func (v *Variable) GetValue() (any, error)
+```
 
 ### Set
 
@@ -510,6 +604,60 @@ func (v *Variable) SetActive(active bool)
 
 **Note:** This change takes effect on the next `DetectChanges()` call. Setting a variable to inactive effectively "prunes" that entire subtree from change detection.
 
+### NavigationValue
+
+Returns the value used for child path navigation.
+
+```go
+func (v *Variable) NavigationValue() any
+```
+
+**Returns:** WrapperValue if present, otherwise Value.
+
+### JsonForUpdate
+
+Returns the JSON used for wrapper-aware change comparison.
+
+```go
+func (v *Variable) JsonForUpdate() any
+```
+
+**Returns:** WrapperJSON if present, otherwise ValueJSON.
+
+### GetAccess
+
+Returns the access mode of the variable.
+
+```go
+func (v *Variable) GetAccess() string
+```
+
+**Returns:** `"r"`, `"w"`, `"rw"`, or `"action"`. Defaults to `"rw"`.
+
+### IsReadable
+
+```go
+func (v *Variable) IsReadable() bool
+```
+
+Returns `true` if access allows reading (`"r"` or `"rw"`).
+
+### IsWritable
+
+```go
+func (v *Variable) IsWritable() bool
+```
+
+Returns `true` if access allows writing (`"w"`, `"rw"`, or `"action"`).
+
+### IsAction
+
+```go
+func (v *Variable) IsAction() bool
+```
+
+Returns `true` if access is `"action"`.
+
 ### GetProperty
 
 ```go
@@ -535,6 +683,7 @@ Sets a property. Empty value removes the property.
 - Setting `priority` (values: `"low"`, `"medium"`, `"high"`) updates `ValuePriority`
 - Setting `path` re-parses the path and updates the `Path` field
 - Setting `access` (values: `"r"`, `"w"`, `"rw"`, `"action"`) updates `Access`
+- Setting `wrapper` triggers wrapper update (creates or destroys wrapper via `Resolver.CreateWrapper`)
 
 **Change Tracking:**
 - Records the property change in the tracker (property name added to changed properties)
@@ -550,7 +699,9 @@ Returns the priority for a property, or `PriorityMedium` if not explicitly set.
 
 ## Comparison Strategy
 
-Change detection compares Value JSON representations. Each variable stores its last known Value JSON, and `DetectChanges()` compares the current Value JSON to the stored one.
+Change detection uses `reflect.DeepEqual` (`JsonEqual`) to compare Value JSON representations. Each variable stores its last known Value JSON, and `DetectChanges()` compares the current Value JSON to the stored one.
+
+For variables with wrappers, the comparison uses wrapper-aware JSON (`JsonForUpdate()`) to determine whether a change is reported externally. See the wrapper-aware comparison notes in `DetectChanges()`.
 
 This means:
 - Primitives compare by value

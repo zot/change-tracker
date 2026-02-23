@@ -10,8 +10,21 @@ type Resolver interface {
     Set(obj any, pathElement any, value any) error
     Call(obj any, methodName string) (any, error)
     CallWith(obj any, methodName string, value any) error
+    CreateValue(variable *Variable, typ string, value any) any
+    CreateWrapper(variable *Variable) any
+    GetType(variable *Variable, value any) string
+    ConvertToValueJSON(tracker *Tracker, value any) any
 }
 ```
+
+### Extension Methods
+
+Beyond the core navigation methods (Get, Set, Call, CallWith), the Resolver interface includes extension points:
+
+- **CreateValue**: Called when a variable has a "create" property. Returns a newly created value or nil.
+- **CreateWrapper**: Called when a variable has a "wrapper" property. Returns a wrapper object that children navigate through instead of the variable's value. Return nil for no wrapper. Return the same pointer as `v.WrapperValue` to preserve wrapper state.
+- **GetType**: Returns a type string for a value. Used by `Variable.SetType()` to automatically update the "type" property when a variable's value is an object reference.
+- **ConvertToValueJSON**: Called at the start of `ToValueJSON()` to convert domain-specific types (e.g., Lua tables) into standard Go types before serialization. The default implementation returns the value unchanged.
 
 ## Default Resolver (Tracker)
 
@@ -235,6 +248,22 @@ func (r *JSONResolver) Call(obj any, methodName string) (any, error) {
 
 func (r *JSONResolver) CallWith(obj any, methodName string, value any) error {
     return fmt.Errorf("method calls not supported for JSON data")
+}
+
+func (r *JSONResolver) CreateValue(variable *Variable, typ string, value any) any {
+    return value
+}
+
+func (r *JSONResolver) CreateWrapper(variable *Variable) any {
+    return nil
+}
+
+func (r *JSONResolver) GetType(variable *Variable, value any) string {
+    return ""
+}
+
+func (r *JSONResolver) ConvertToValueJSON(tracker *Tracker, value any) any {
+    return value
 }
 ```
 
