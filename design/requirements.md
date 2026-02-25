@@ -109,7 +109,7 @@
 ## Feature: Structured Errors
 **Source:** specs/api.md
 
-- **R59:** VariableErrorType enum categorizes errors (PathError, NotFound, BadSetterCall, BadAccess, BadIndex, BadReference, BadParent, BadCall, NilPath)
+- **R59:** VariableErrorType enum categorizes errors (PathError, NotFound, BadSetterCall, BadAccess, BadIndex, BadReference, BadParent, BadCall, NilPath, DeferredCode)
 - **R60:** VariableError has ErrorType, Message, and Cause fields
 - **R61:** Variable.Error field stores last error from Get/Set operations
 - **R62:** All resolver and variable operations return VariableError for failures

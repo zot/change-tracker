@@ -31,6 +31,7 @@
 | BadParent | Parent variable not found |
 | BadCall | Method call failed |
 | NilPath | Nil value encountered during path navigation |
+| DeferredCode | Deferred code execution marker |
 
 ### Error Construction
 
