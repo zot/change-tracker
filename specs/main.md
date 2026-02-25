@@ -35,7 +35,7 @@ The tracker is the central object that:
 - Has a `Resolver` field (defaults to itself, using Go reflection)
 - Serializes values to Value JSON form
 - Has a `DiagLevel` field (int, default 0) controlling diagnostic output
-- Tracks which variable is currently being computed (`computingVar`)
+- Tracks which variable is currently being computed (`ComputingVar`)
 
 ### Variables
 
@@ -180,7 +180,7 @@ The tracker provides per-variable diagnostic support for debugging resolver and 
 
 - **DiagLevel** - An integer on the tracker (default 0) that controls which diagnostics are collected. A level of 0 means diagnostics are disabled.
 - **Diag(level, format, args...)** - A method on the tracker that adds a formatted diagnostic string to the currently-computing variable's `Diags` slice, but only if the tracker's `DiagLevel` is >= the specified level.
-- **computingVar** - The tracker internally tracks which variable is currently having its value computed. This is set before path navigation in `GetValue()` and cleared after.
+- **ComputingVar** - The variable currently having its value computed (exported). This is set before path navigation in `GetValue()` and cleared after. Custom resolvers can use this to identify which variable triggered a resolution.
 - **Diags** - Each variable has a `Diags []string` field. It is cleared at the start of each value recomputation (in `GetValue()`). Diagnostics accumulate during path navigation and resolver calls.
 - If `Diag()` is called when no variable is being computed, the call is ignored.
 

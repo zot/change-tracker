@@ -155,7 +155,7 @@
 - **R82:** Diag does nothing if DiagLevel < level or no variable is currently being computed
 - **R83:** Variable has Diags field ([]string) collecting diagnostics from most recent value recomputation
 - **R84:** Variable's Diags are cleared at the start of each value recomputation in GetValue()
-- **R85:** Tracker internally tracks which variable is currently being computed (computingVar), set during GetValue() path navigation
+- **R85:** Tracker tracks which variable is currently being computed (ComputingVar, exported), set during GetValue() path navigation
 
 ## Feature: Change Counters
 **Source:** specs/main.md

@@ -43,7 +43,8 @@ type Tracker struct {
     Resolver    Resolver  // defaults to the tracker itself
     DiagLevel   int       // diagnostic level (0 = disabled)
     ChangeCount int64     // incremented each time DetectChanges() finds changes
-    // Internal fields for variable storage, ID generation, changed set, object registry, root variable IDs, computingVar
+    ComputingVar *Variable  // variable currently being computed (nil when idle)
+    // Internal fields for variable storage, ID generation, changed set, object registry, root variable IDs
 }
 ```
 
@@ -206,8 +207,8 @@ func (t *Tracker) Diag(level int, format string, args ...any)
 
 **Behavior:**
 - If `t.DiagLevel < level`, does nothing
-- If no variable is currently being computed (`computingVar` is nil), does nothing
-- Otherwise, appends `fmt.Sprintf(format, args...)` to `computingVar.Diags`
+- If no variable is currently being computed (`ComputingVar` is nil), does nothing
+- Otherwise, appends `fmt.Sprintf(format, args...)` to `ComputingVar.Diags`
 
 ### CreateVariable
 

@@ -140,7 +140,7 @@ type Tracker struct {
 	sortedChanges []Change
 
 	// Diagnostics
-	computingVar *Variable // variable currently having its value computed
+	ComputingVar *Variable // variable currently having its value computed
 
 	// Object registry: maps object pointer to weak entry
 	// CRC: crc-ObjectRegistry.md
@@ -168,10 +168,10 @@ func NewTracker() *Tracker {
 // Diag adds a diagnostic message to the currently-computing variable's Diags slice.
 // CRC: crc-Tracker.md
 func (t *Tracker) Diag(level int, format string, args ...any) {
-	if t.DiagLevel < level || t.computingVar == nil {
+	if t.DiagLevel < level || t.ComputingVar == nil {
 		return
 	}
-	t.computingVar.Diags = append(t.computingVar.Diags, fmt.Sprintf(format, args...))
+	t.ComputingVar.Diags = append(t.ComputingVar.Diags, fmt.Sprintf(format, args...))
 }
 
 type VariableErrorType int64
@@ -1397,7 +1397,7 @@ func (v *Variable) GetValue() (any, error) {
 
 	// Clear diagnostics and set computing context
 	v.Diags = nil
-	v.tracker.computingVar = v
+	v.tracker.ComputingVar = v
 
 	// Time only this variable's own path navigation (excludes parent value retrieval)
 	start := time.Now()
@@ -1419,13 +1419,13 @@ func (v *Variable) GetValue() (any, error) {
 
 		v.Error = err
 		if err != nil {
-			v.tracker.computingVar = nil
+			v.tracker.ComputingVar = nil
 			return nil, err
 		}
 		current = val
 	}
 
-	v.tracker.computingVar = nil
+	v.tracker.ComputingVar = nil
 	v.ComputeTime = time.Since(start)
 	if v.ComputeTime > v.MaxComputeTime {
 		v.MaxComputeTime = v.ComputeTime

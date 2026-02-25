@@ -45,7 +45,7 @@ Client              Variable            Tracker             Resolver
   |                    |                    |                   |
   |                    | Diags = nil        |                   |
   |                    | tracker.           |                   |
-  |                    | computingVar = v   |                   |
+  |                    | ComputingVar = v   |                   |
   |                    |--------.           |                   |
   |                    |<-------'           |                   |
   |                    |                    |                   |
@@ -87,7 +87,7 @@ Client              Variable            Tracker             Resolver
   |                    |<-------'           |                   |
   |                    |                    |                   |
   |                    | tracker.           |                   |
-  |                    | computingVar = nil |                   |
+  |                    | ComputingVar = nil |                   |
   |                    |--------.           |                   |
   |                    |<-------'           |                   |
   |                    |                    |                   |
@@ -110,7 +110,7 @@ Client              Variable            Tracker             Resolver
 - The result is cached in Variable.Value for child navigation
 - ComputeTime is measured from the start of path navigation to the end (excludes parent value retrieval)
 - MaxComputeTime is updated if ComputeTime exceeds the current maximum
-- Diags are cleared and computingVar is set before path navigation; computingVar is cleared after
+- Diags are cleared and ComputingVar is set before path navigation; ComputingVar is cleared after
 - Resolver calls can use tracker.Diag() during path navigation to add diagnostics to the current variable
 - Errors propagate if any path element resolution fails
 - Path elements can be strings (field, key, method) or ints (index)
