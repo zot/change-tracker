@@ -187,6 +187,7 @@ const (
 	BadParent
 	BadCall
 	NilPath
+	DeferredCode
 )
 
 func (e VariableErrorType) String() string {
@@ -201,6 +202,7 @@ func (e VariableErrorType) String() string {
 		"BadParent",
 		"BadCall",
 		"NilPath",
+		"DeferredCode",
 	}[e]
 }
 
