@@ -256,6 +256,29 @@ type Variable struct {
 	tracker *Tracker
 }
 
+// DiagPath returns a diagnostic string like "1/columns/items" showing the
+// variable's full path from the root variable.
+func (v *Variable) DiagPath() string {
+	var parts []string
+	cur := v
+	for cur != nil {
+		label := fmt.Sprintf("%d", cur.ID)
+		if len(cur.Path) > 0 {
+			pathStrs := make([]string, len(cur.Path))
+			for i, p := range cur.Path {
+				pathStrs[i] = fmt.Sprintf("%v", p)
+			}
+			label = strings.Join(pathStrs, ".")
+		}
+		parts = append([]string{label}, parts...)
+		if cur.ParentID == 0 {
+			break
+		}
+		cur = cur.tracker.variables[cur.ParentID]
+	}
+	return strings.Join(parts, "/")
+}
+
 func (v *Variable) JsonForUpdate() any {
 	if v.WrapperJSON != nil {
 		return v.WrapperJSON
